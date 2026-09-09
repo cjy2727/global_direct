@@ -1,1 +1,7 @@
 AGENTS.md
+.env
+.idea/
+.vscode/
+vendor/
+node_modules/
+*.log
