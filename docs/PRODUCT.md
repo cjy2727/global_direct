@@ -11,23 +11,25 @@
 3. 수집 실패 시 운영자 수동 견적으로 전환한다.
 4. 고객이 옵션, 수량, 요청사항을 입력한다.
 5. 상품가, 환율, 대행비, 국내/국제 배송비, 예상 세금을 확인한다.
-6. 고객이 주문을 제출한다. MVP에서는 실제 결제 대신 결제 대기 상태를 만든다.
+6. 고객이 구매대행 신청을 제출하면 검토 대기 상태로 저장한다.
 7. 운영자가 주문 검토, 현지 주문, 창고 입고, 검수, 국제 발송을 처리한다.
 8. 고객은 주문 번호로 진행 상황을 확인한다.
 
 ## 주문 상태
 
-`quote_requested → review_pending → payment_pending → paid → local_ordered → warehouse_received → inspected → international_shipping → customs → domestic_shipping → delivered`
+`review_pending → confirmed → local_ordered → warehouse_received → inspected → international_shipping → customs → domestic_shipping → delivered`
 
 예외 상태: `manual_quote`, `cancelled`, `refund_requested`, `refunded`, `blocked_item`.
 
-결제 완료 이후 고객 변심 취소는 운영자 심사 대상으로 처리한다. 금지품목은 견적 단계에서 차단하고, 자동 판별이 불확실하면 수동 검토로 보낸다.
+현지 주문 이후 고객 변심 취소는 별도 문의 대상으로 처리한다. 금지품목은 견적 단계에서 차단하고, 자동 판별이 불확실하면 수동 검토로 보낸다.
 
 ## MVP 범위
 
 - URL 유효성 및 허용 도메인 검사
 - 상품 수집 작업 큐 구조
-- JPY 기준 자동 견적
+- Playwright 기반 상품명·이미지·가격·옵션 자동 분석
+- 분석 결과를 저장한 상품 상세 페이지
+- 옵션·수량·요청사항과 장바구니
 - 주문 생성과 상태 이력
 - 고객용 주문 조회
 - 관리자 주문 큐와 허용된 상태 전이
@@ -38,8 +40,15 @@
 
 - 쇼핑몰별 수집 어댑터
 - 회원가입과 주소록, 개인통관 정보 암호화
-- PG 결제 및 환불
 - 창고 바코드, 검수 사진, 합포장
 - 배송사 API와 LINE/이메일 알림
 - 환율 공급자, 관세 룰 엔진, 쿠폰
 - 고객지원 티켓과 보상 정책
+
+## 구현된 2차 범위
+
+- 세션 기반 회원가입·로그인과 안전한 비밀번호 해시
+- 로그인 고객의 주문 생성 및 내 주문 조회
+- 주문 시 일본 배송지 스냅샷 보존
+- 창고 검수 결과와 국제배송 송장 데이터 구조
+- 상품수집과 배송사 연동을 교체 가능한 PHP 인터페이스로 분리

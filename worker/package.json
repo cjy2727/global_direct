@@ -1,0 +1,7 @@
+{
+  "name": "globaldirect-product-worker",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node server.js", "check": "node --check server.js" },
+  "dependencies": { "playwright": "1.63.0" }
+}

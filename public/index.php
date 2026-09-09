@@ -1,13 +1,11 @@
 <?php
-
 declare(strict_types=1);
-
 require dirname(__DIR__) . '/src/bootstrap.php';
 
-use App\Database;
-use App\OrderWorkflow;
-use App\QuoteCalculator;
-use App\RedisCache;
+use App\Auth;
+use App\CartService;
+use App\OrderService;
+use App\ProductService;
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -34,71 +32,72 @@ function render(string $view, array $data = []): never
     exit;
 }
 
-if ($path === '/health') {
-    json_response(['ok' => true, 'service' => 'globaldirect']);
-}
+if ($path === '/health') json_response(['ok' => true, 'service' => 'globaldirect']);
 
-if ($path === '/api/quote' && $method === 'POST') {
+if ($path === '/api/products/analyze' && $method === 'POST') {
     $input = request_json();
     try {
-        $url = (string) ($input['url'] ?? '');
-        $quantity = (int) ($input['quantity'] ?? 1);
-        $cache = new RedisCache();
-        $cacheKey = 'globaldirect:quote:' . hash('sha256', $url . '|' . $quantity);
-        $cached = $cache->get($cacheKey);
-        $estimate = $cached === null ? (new QuoteCalculator())->calculate($url, $quantity) : json_decode($cached, true);
-        if ($cached === null) {
-            $cache->set($cacheKey, json_encode($estimate, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), 900);
-        }
-        json_response(['ok' => true, 'estimate' => $estimate, 'cache' => $cached === null ? 'miss' : 'hit']);
-    } catch (InvalidArgumentException $exception) {
+        $product=(new ProductService())->analyze((string)($input['url']??''));
+        json_response(['ok'=>true,'product'=>['id'=>$product['public_id'],'url'=>'/products/'.$product['public_id']]],201);
+    } catch (RuntimeException $exception) {
         json_response(['ok' => false, 'message' => $exception->getMessage()], 422);
     }
 }
 
-if ($path === '/api/orders' && $method === 'GET') {
-    $orders = Database::connection()->query('SELECT order_no, customer_name, status, total_jpy, product_name, created_at FROM orders ORDER BY created_at DESC LIMIT 100')->fetchAll();
-    foreach ($orders as &$order) {
-        $order['next_statuses'] = OrderWorkflow::nextStatuses($order['status']);
-    }
-    json_response(['ok' => true, 'orders' => $orders]);
+if(preg_match('#^/api/products/([a-f0-9]{16})$#',$path,$matches)&&$method==='GET'){
+    try{json_response(['ok'=>true,'product'=>(new ProductService())->find($matches[1])]);}
+    catch(RuntimeException $exception){json_response(['ok'=>false,'message'=>$exception->getMessage()],404);}
 }
 
-if (preg_match('#^/api/orders/([^/]+)/status$#', $path, $matches) && $method === 'POST') {
+if($path==='/api/cart/items'&&$method==='POST'){
+    $input=request_json();
+    try{json_response(['ok'=>true,'cart'=>(new CartService())->add((string)($input['product_id']??''),(int)($input['quantity']??1),(array)($input['selected_options']??[]),(string)($input['request_note']??''))],201);}
+    catch(RuntimeException $exception){json_response(['ok'=>false,'message'=>$exception->getMessage()],422);}
+}
+if($path==='/api/cart'&&$method==='GET')json_response(['ok'=>true,'items'=>(new CartService())->items()]);
+
+if ($path === '/api/register' && $method === 'POST') {
     $input = request_json();
-    if (!hash_equals(csrf_token(), (string) ($_SERVER['HTTP_X_CSRF_TOKEN'] ?? ''))) {
-        json_response(['ok' => false, 'message' => '요청 인증값이 올바르지 않습니다.'], 419);
-    }
-
-    $pdo = Database::connection();
-    $query = $pdo->prepare('SELECT id, status FROM orders WHERE order_no = ?');
-    $query->execute([$matches[1]]);
-    $order = $query->fetch();
-    $next = (string) ($input['status'] ?? '');
-    if (!$order || !OrderWorkflow::canTransition($order['status'], $next)) {
-        json_response(['ok' => false, 'message' => '허용되지 않은 상태 변경입니다.'], 422);
-    }
-
-    $pdo->beginTransaction();
-    $update = $pdo->prepare('UPDATE orders SET status = ? WHERE id = ?');
-    $update->execute([$next, $order['id']]);
-    $history = $pdo->prepare('INSERT INTO order_status_history (order_id, from_status, to_status, note) VALUES (?, ?, ?, ?)');
-    $history->execute([$order['id'], $order['status'], $next, '관리자 데모 화면에서 변경']);
-    $pdo->commit();
-    json_response(['ok' => true, 'status' => $next]);
+    try { json_response(['ok' => true, 'user' => (new Auth())->register((string) ($input['email'] ?? ''), (string) ($input['password'] ?? ''), (string) ($input['name'] ?? ''))], 201); }
+    catch (RuntimeException $exception) { json_response(['ok' => false, 'message' => $exception->getMessage()], 422); }
 }
 
-if ($path === '/admin') {
-    render('admin', ['title' => '운영 대시보드']);
+if ($path === '/api/login' && $method === 'POST') {
+    $input = request_json();
+    try { json_response(['ok' => true, 'user' => (new Auth())->login((string) ($input['email'] ?? ''), (string) ($input['password'] ?? ''))]); }
+    catch (RuntimeException $exception) { json_response(['ok' => false, 'message' => $exception->getMessage()], 401); }
 }
 
-if ($path === '/orders') {
-    render('orders', ['title' => '주문 조회']);
+if ($path === '/api/logout' && $method === 'POST') { Auth::logout(); json_response(['ok' => true]); }
+if ($path === '/api/session' && $method === 'GET') json_response(['ok' => true, 'user' => Auth::user()]);
+
+if ($path === '/api/orders' && $method === 'POST') {
+    $user = Auth::user();
+    if ($user === null) json_response(['ok' => false, 'message' => '로그인이 필요합니다.'], 401);
+    $input=request_json();
+    try { json_response(['ok' => true, 'order' => (new OrderService())->createFromProduct($user,(string)($input['product_id']??''),$input)], 201); }
+    catch (RuntimeException $exception) { json_response(['ok' => false, 'message' => $exception->getMessage()], 422); }
 }
 
-if ($path === '/') {
-    render('home', ['title' => '한국 쇼핑을 더 가깝게']);
+if ($path === '/api/orders/mine' && $method === 'GET') {
+    $user = Auth::user();
+    if ($user === null) json_response(['ok' => false, 'message' => '로그인이 필요합니다.'], 401);
+    json_response(['ok' => true, 'orders' => (new OrderService())->mine((int) $user['id'])]);
 }
+
+if ($path === '/account') render('account', ['title' => '내 계정']);
+if(preg_match('#^/products/([a-f0-9]{16})$#',$path,$matches)){
+    try{render('product',['title'=>'상품 상세','product'=>(new ProductService())->find($matches[1])]);}
+    catch(RuntimeException){http_response_code(404);render('not-found',['title'=>'상품을 찾을 수 없습니다']);}
+}
+if ($path === '/request') {
+    $productId=(string)($_GET['product']??'');
+    try{render('request',['title'=>'구매대행 신청','product'=>(new ProductService())->find($productId)]);}
+    catch(RuntimeException){http_response_code(404);render('not-found',['title'=>'상품을 찾을 수 없습니다']);}
+}
+if($path==='/cart')render('cart',['title'=>'장바구니']);
+if ($path === '/orders') render('orders', ['title' => '주문 조회']);
+if ($path === '/') render('home', ['title' => '한국 쇼핑을 더 가깝게']);
 
 http_response_code(404);
 render('not-found', ['title' => '페이지를 찾을 수 없습니다']);
