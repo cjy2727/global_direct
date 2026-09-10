@@ -1,5 +1,7 @@
 <?php
+
 declare(strict_types=1);
+
 namespace App;
 
 final class OrderWorkflow
@@ -15,6 +17,12 @@ final class OrderWorkflow
         'domestic_shipping' => ['delivered'],
     ];
 
-    public static function canTransition(string $from,string $to):bool{return in_array($to,self::TRANSITIONS[$from]??[],true);}
-    public static function nextStatuses(string $from):array{return self::TRANSITIONS[$from]??[];}
+    public static function canTransition(string $from, string $to): bool
+    {
+        return in_array($to, self::TRANSITIONS[$from] ?? [], true);
+    }
+    public static function nextStatuses(string $from): array
+    {
+        return self::TRANSITIONS[$from] ?? [];
+    }
 }

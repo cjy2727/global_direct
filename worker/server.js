@@ -10,10 +10,24 @@ const MAX_BODY = 16 * 1024;
 function isPrivateIp(address) {
   if (net.isIPv4(address)) {
     const p = address.split('.').map(Number);
-    return p[0] === 10 || p[0] === 127 || p[0] === 0 || (p[0] === 169 && p[1] === 254) || (p[0] === 172 && p[1] >= 16 && p[1] <= 31) || (p[0] === 192 && p[1] === 168) || (p[0] === 100 && p[1] >= 64 && p[1] <= 127) || p[0] >= 224;
+    return p[0] === 10
+      || p[0] === 127
+      || p[0] === 0
+      || (p[0] === 169 && p[1] === 254)
+      || (p[0] === 172 && p[1] >= 16 && p[1] <= 31)
+      || (p[0] === 192 && p[1] === 168)
+      || (p[0] === 100 && p[1] >= 64 && p[1] <= 127)
+      || p[0] >= 224;
   }
   const normalized = address.toLowerCase();
-  return normalized === '::1' || normalized === '::' || normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe80:') || normalized.startsWith('::ffff:127.') || normalized.startsWith('::ffff:10.') || normalized.startsWith('::ffff:192.168.');
+  return normalized === '::1'
+    || normalized === '::'
+    || normalized.startsWith('fc')
+    || normalized.startsWith('fd')
+    || normalized.startsWith('fe80:')
+    || normalized.startsWith('::ffff:127.')
+    || normalized.startsWith('::ffff:10.')
+    || normalized.startsWith('::ffff:192.168.');
 }
 
 async function assertPublicUrl(raw) {
@@ -93,7 +107,13 @@ async function analyze(rawUrl) {
       const hostname = location.hostname.toLowerCase();
       const isRakuten = hostname === 'rakuten.co.jp' || hostname.endsWith('.rakuten.co.jp');
       const title = text(product.name) || text(meta('meta[property="og:title"]')) || text(document.querySelector('h1')?.textContent) || text(document.title);
-      const priceValues = [offer.price, offer.lowPrice, meta('meta[property="product:price:amount"]'), document.querySelector('[itemprop="price"]')?.getAttribute('content'), document.querySelector('[itemprop="price"]')?.textContent];
+      const priceValues = [
+        offer.price,
+        offer.lowPrice,
+        meta('meta[property="product:price:amount"]'),
+        document.querySelector('[itemprop="price"]')?.getAttribute('content'),
+        document.querySelector('[itemprop="price"]')?.textContent,
+      ];
       let price = priceValues.find((value) => value != null && String(value).trim() !== '') || null;
       let currency = text(offer.priceCurrency) || text(meta('meta[property="product:price:currency"]'));
       const bodyText = (document.body?.innerText || '').slice(0, 160000);
@@ -120,7 +140,12 @@ async function analyze(rawUrl) {
         if (url?.startsWith('http') && !/\/(?:undefined|null)(?:[?#]|$)/i.test(url)) imageCandidates.push(url);
       };
       addImage(product.image); addImage(meta('meta[property="og:image"]'));
-      for (const img of document.querySelectorAll('main img, [class*="product"] img, [id*="product"] img')) addImage(img.currentSrc || img.src || img.dataset.src || img.dataset.original);
+      const productImages = document.querySelectorAll(
+        'main img, [class*="product"] img, [id*="product"] img',
+      );
+      for (const img of productImages) {
+        addImage(img.currentSrc || img.src || img.dataset.src || img.dataset.original);
+      }
       const images = [...new Set(imageCandidates)].filter((url) => !url.startsWith('data:')).slice(0, 12);
       const optionGroups = [];
       const addGroup = (name, values) => {
@@ -134,7 +159,13 @@ async function analyze(rawUrl) {
           return rawValue;
         }).filter(Boolean))].slice(0, 30);
         if (!cleanValues.length || cleanValues.every((value) => /^(?:🇯🇵|🇰🇷|한국어|일본어|한국|일본|ko|ja)$/i.test(value))) return;
-        if (!optionGroups.some((group) => group.name === cleanName && JSON.stringify(group.values) === JSON.stringify(cleanValues))) optionGroups.push({ name: cleanName, values: cleanValues });
+        const alreadyAdded = optionGroups.some((group) => (
+          group.name === cleanName
+          && JSON.stringify(group.values) === JSON.stringify(cleanValues)
+        ));
+        if (!alreadyAdded) {
+          optionGroups.push({ name: cleanName, values: cleanValues });
+        }
       };
       for (const select of document.querySelectorAll('select')) {
         const options = [...select.options].map((o) => text(o.textContent)).filter((v) => v && !/선택|select|choose/i.test(v)).slice(0, 30);
@@ -164,7 +195,16 @@ async function analyze(rawUrl) {
           try { visitState(JSON.parse(line.slice(separator + 1))); } catch {}
         }
       }
-      return { title, price, currency, images, optionGroups: optionGroups.slice(0, 8), description: text(product.description) || text(meta('meta[property="og:description"]')), canonicalUrl: document.querySelector('link[rel="canonical"]')?.href || location.href, availability: text(offer.availability) };
+      return {
+        title,
+        price,
+        currency,
+        images,
+        optionGroups: optionGroups.slice(0, 8),
+        description: text(product.description) || text(meta('meta[property="og:description"]')),
+        canonicalUrl: document.querySelector('link[rel="canonical"]')?.href || location.href,
+        availability: text(offer.availability),
+      };
     });
     const price = parsePrice(result.price);
     const currency = String(result.currency || 'UNKNOWN').trim().toUpperCase();

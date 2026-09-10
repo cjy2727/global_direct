@@ -1,5 +1,7 @@
 <?php
+
 declare(strict_types=1);
+
 namespace App;
 
 use PDOException;
@@ -44,8 +46,15 @@ final class Auth
         return $this->establishSession((int) $user['id'], $user['email'], $user['name'], $user['role']);
     }
 
-    public static function user(): ?array { return isset($_SESSION['user']) && is_array($_SESSION['user']) ? $_SESSION['user'] : null; }
-    public static function logout(): void { unset($_SESSION['user']); session_regenerate_id(true); }
+    public static function user(): ?array
+    {
+        return isset($_SESSION['user']) && is_array($_SESSION['user']) ? $_SESSION['user'] : null;
+    }
+    public static function logout(): void
+    {
+        unset($_SESSION['user']);
+        session_regenerate_id(true);
+    }
     private function establishSession(int $id, string $email, string $name, string $role): array
     {
         session_regenerate_id(true);

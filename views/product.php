@@ -1,10 +1,130 @@
 <?php
-$images=$product['images']??[];$options=$product['options']??[];
-$currency=['KRW'=>'₩','JPY'=>'¥','USD'=>'$'][$product['currency']]??$product['currency'].' ';
+$images = $product['images'] ?? [];
+$options = $product['options'] ?? [];
+$currency = [
+    'KRW' => '₩',
+    'JPY' => '¥',
+    'USD' => '$',
+][$product['currency']] ?? $product['currency'] . ' ';
+$sourceHost = strtolower((string) $product['source_host']);
+$isCoupang = $sourceHost === 'coupang.com' || str_ends_with($sourceHost, '.coupang.com');
 ?>
-<section class="product-detail" data-product-id="<?= htmlspecialchars($product['public_id'],ENT_QUOTES,'UTF-8') ?>">
-    <div class="product-gallery"><div class="product-main-image"><?php if($images): ?><img id="main-product-image" src="<?= htmlspecialchars($images[0],ENT_QUOTES,'UTF-8') ?>" alt="<?= htmlspecialchars($product['title'],ENT_QUOTES,'UTF-8') ?>" referrerpolicy="no-referrer"><?php else: ?><div class="image-empty">상품 이미지를 찾지 못했습니다</div><?php endif; ?></div><?php if(count($images)>1): ?><div class="product-thumbnails"><?php foreach($images as $index=>$image): ?><button type="button" class="thumbnail<?= $index===0?' active':'' ?>" data-image="<?= htmlspecialchars($image,ENT_QUOTES,'UTF-8') ?>"><img src="<?= htmlspecialchars($image,ENT_QUOTES,'UTF-8') ?>" alt="상품 이미지 <?= $index+1 ?>" loading="lazy" referrerpolicy="no-referrer"></button><?php endforeach; ?></div><?php endif; ?></div>
-    <div class="product-info"><a class="source-host" href="<?= htmlspecialchars($product['final_url'],ENT_QUOTES,'UTF-8') ?>" target="_blank" rel="noopener noreferrer">원본 사이트 · <?= htmlspecialchars($product['source_host'],ENT_QUOTES,'UTF-8') ?> ↗</a><h1><?= htmlspecialchars($product['title'],ENT_QUOTES,'UTF-8') ?></h1><div class="product-price"><?php if($product['price']): ?><?= htmlspecialchars($currency,ENT_QUOTES,'UTF-8') ?><?= number_format((float)$product['price']) ?><?php else: ?><span>가격 확인 필요</span><?php endif; ?></div><?php if($product['analysis_status']==='needs_review'): ?><div class="analysis-warning"><?php if(str_ends_with(strtolower((string)$product['source_host']),'.coupang.com')||strtolower((string)$product['source_host'])==='coupang.com'): ?>쿠팡의 자동화 접근 제한으로 가격·이미지·옵션을 확인하지 못했습니다. 원본 페이지를 확인한 뒤 옵션과 요청사항을 직접 입력해 주세요.<?php else: ?>자동으로 확인하지 못한 정보가 있습니다. 원본 페이지와 함께 확인해 주세요.<?php endif; ?></div><?php endif; ?><?php if($product['description']): ?><p class="product-description"><?= htmlspecialchars($product['description'],ENT_QUOTES,'UTF-8') ?></p><?php endif; ?>
-        <form id="product-action-form"><?php foreach($options as $index=>$option): ?><label><?= htmlspecialchars($option['name'],ENT_QUOTES,'UTF-8') ?><select name="option_<?= $index ?>" data-option-name="<?= htmlspecialchars($option['name'],ENT_QUOTES,'UTF-8') ?>" required><option value="">선택해 주세요</option><?php foreach($option['values'] as $value): ?><option value="<?= htmlspecialchars((string)$value,ENT_QUOTES,'UTF-8') ?>"><?= htmlspecialchars((string)$value,ENT_QUOTES,'UTF-8') ?></option><?php endforeach; ?></select></label><?php endforeach; ?><?php if(!$options): ?><label>옵션 직접 입력<input name="manual_option" data-option-name="직접 입력 옵션" placeholder="색상, 크기 등 원하는 옵션을 입력해 주세요"></label><?php endif; ?><label>수량<input name="quantity" type="number" min="1" max="20" value="1" required></label><label>요청사항<textarea name="request_note" rows="4" maxlength="1000" placeholder="판매자에게 전달할 요청이나 확인할 내용을 입력해 주세요"></textarea></label><div class="product-actions"><button type="button" class="secondary" id="add-cart-button">장바구니 담기</button><button type="button" class="primary" id="buy-now-button">구매하기 <span>→</span></button></div><div id="product-action-message" class="form-message"></div></form>
+<section
+    class="product-detail"
+    data-product-id="<?= htmlspecialchars($product['public_id'], ENT_QUOTES, 'UTF-8') ?>">
+    <div class="product-gallery">
+        <div class="product-main-image">
+            <?php if ($images): ?>
+                <img
+                    id="main-product-image"
+                    src="<?= htmlspecialchars($images[0], ENT_QUOTES, 'UTF-8') ?>"
+                    alt="<?= htmlspecialchars($product['title'], ENT_QUOTES, 'UTF-8') ?>"
+                    referrerpolicy="no-referrer">
+            <?php else: ?>
+                <div class="image-empty">상품 이미지를 찾지 못했습니다</div>
+            <?php endif; ?>
+        </div>
+
+        <?php if (count($images) > 1): ?>
+            <div class="product-thumbnails">
+                <?php foreach ($images as $index => $image): ?>
+                    <button
+                        type="button"
+                        class="thumbnail<?= $index === 0 ? ' active' : '' ?>"
+                        data-image="<?= htmlspecialchars($image, ENT_QUOTES, 'UTF-8') ?>">
+                        <img
+                            src="<?= htmlspecialchars($image, ENT_QUOTES, 'UTF-8') ?>"
+                            alt="상품 이미지 <?= $index + 1 ?>"
+                            loading="lazy"
+                            referrerpolicy="no-referrer">
+                    </button>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    </div>
+
+    <div class="product-info">
+        <a
+            class="source-host"
+            href="<?= htmlspecialchars($product['final_url'], ENT_QUOTES, 'UTF-8') ?>"
+            target="_blank"
+            rel="noopener noreferrer">
+            원본 사이트 · <?= htmlspecialchars($product['source_host'], ENT_QUOTES, 'UTF-8') ?> ↗
+        </a>
+
+        <h1><?= htmlspecialchars($product['title'], ENT_QUOTES, 'UTF-8') ?></h1>
+
+        <div class="product-price">
+            <?php if ($product['price']): ?>
+                <?= htmlspecialchars($currency, ENT_QUOTES, 'UTF-8') ?><?= number_format((float) $product['price']) ?>
+            <?php else: ?>
+                <span>가격 확인 필요</span>
+            <?php endif; ?>
+        </div>
+
+        <?php if ($product['analysis_status'] === 'needs_review'): ?>
+            <div class="analysis-warning">
+                <?php if ($isCoupang): ?>
+                    쿠팡의 자동화 접근 제한으로 가격·이미지·옵션을 확인하지 못했습니다.
+                    원본 페이지를 확인한 뒤 옵션과 요청사항을 직접 입력해 주세요.
+                <?php else: ?>
+                    자동으로 확인하지 못한 정보가 있습니다. 원본 페이지와 함께 확인해 주세요.
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($product['description']): ?>
+            <p class="product-description">
+                <?= htmlspecialchars($product['description'], ENT_QUOTES, 'UTF-8') ?>
+            </p>
+        <?php endif; ?>
+
+        <form id="product-action-form">
+            <?php foreach ($options as $index => $option): ?>
+                <label>
+                    <?= htmlspecialchars($option['name'], ENT_QUOTES, 'UTF-8') ?>
+                    <select
+                        name="option_<?= $index ?>"
+                        data-option-name="<?= htmlspecialchars($option['name'], ENT_QUOTES, 'UTF-8') ?>"
+                        required>
+                        <option value="">선택해 주세요</option>
+                        <?php foreach ($option['values'] as $value): ?>
+                            <option value="<?= htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') ?>">
+                                <?= htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+            <?php endforeach; ?>
+
+            <?php if (!$options): ?>
+                <label>
+                    옵션 직접 입력
+                    <input
+                        name="manual_option"
+                        data-option-name="직접 입력 옵션"
+                        placeholder="색상, 크기 등 원하는 옵션을 입력해 주세요">
+                </label>
+            <?php endif; ?>
+
+            <label>
+                수량
+                <input name="quantity" type="number" min="1" max="20" value="1" required>
+            </label>
+            <label>
+                요청사항
+                <textarea
+                    name="request_note"
+                    rows="4"
+                    maxlength="1000"
+                    placeholder="판매자에게 전달할 요청이나 확인할 내용을 입력해 주세요"></textarea>
+            </label>
+
+            <div class="product-actions">
+                <button type="button" class="secondary" id="add-cart-button">장바구니 담기</button>
+                <button type="button" class="primary" id="buy-now-button">구매하기 <span>→</span></button>
+            </div>
+            <div id="product-action-message" class="form-message"></div>
+        </form>
     </div>
 </section>
