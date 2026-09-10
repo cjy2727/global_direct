@@ -6,9 +6,16 @@ use RuntimeException;
 
 final class OrderService
 {
+    private SimpleMySql $db;
+
+    public function __construct(?SimpleMySql $db = null)
+    {
+        $this->db = $db ?? new SimpleMySql();
+    }
+
     public function createFromProduct(array $user,string $publicId,array $input):array
     {
-        $product=(new ProductService())->find($publicId);
+        $product=(new ProductService($this->db))->find($publicId);
         $quantity=max(1,min(20,(int)($input['quantity']??1)));
         $address=$input['address']??[];
         foreach(['recipient','postal_code','region','city','address1','phone'] as $field) if(trim((string)($address[$field]??''))==='') throw new RuntimeException('배송지 필수 정보를 모두 입력해 주세요.');
@@ -16,22 +23,44 @@ final class OrderService
         if(!is_array($options))$options=[];
         $optionText=implode(' / ',array_map(static fn($key,$value)=>$key.': '.$value,array_keys($options),array_values($options)));
         $unitPrice=(float)($product['price']??0);
-        $totalJpy=$product['currency']==='KRW'?(int)ceil($unitPrice*$quantity/9.15):($product['currency']==='JPY'?(int)ceil($unitPrice*$quantity):0);
+        $totalJpy=self::estimateTotalJpy($unitPrice,(string)($product['currency']??''),$quantity);
         $orderNo='GD-'.date('ymd').'-'.strtoupper(bin2hex(random_bytes(3)));
-        $pdo=Database::connection();$pdo->beginTransaction();
-        try{
-            $statement=$pdo->prepare('INSERT INTO orders (user_id,product_id,order_no,customer_name,customer_email,status,total_jpy,source_url,product_name,option_text,quantity,address_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
-            $statement->execute([$user['id'],$product['id'],$orderNo,$user['name'],$user['email'],'review_pending',$totalJpy,$product['source_url'],$product['title'],$optionText,$quantity,json_encode($address,JSON_UNESCAPED_UNICODE)]);
-            $orderId=(int)$pdo->lastInsertId();
+        return $this->db->transaction(function (SimpleMySql $db) use ($user, $product, $orderNo, $totalJpy, $optionText, $quantity, $address, $input): array {
+            $orderId=(int)$db->insert('orders', [
+                'user_id' => $user['id'],
+                'product_id' => $product['id'],
+                'order_no' => $orderNo,
+                'customer_name' => $user['name'],
+                'customer_email' => $user['email'],
+                'status' => 'review_pending',
+                'total_jpy' => $totalJpy,
+                'source_url' => $product['source_url'],
+                'product_name' => $product['title'],
+                'option_text' => $optionText,
+                'quantity' => $quantity,
+                'address_json' => json_encode($address,JSON_UNESCAPED_UNICODE),
+            ]);
             $note='구매대행 신청 접수';if(!empty($input['request_note']))$note.=' · 요청사항 있음';
-            $pdo->prepare('INSERT INTO order_status_history (order_id,from_status,to_status,note) VALUES (?,NULL,?,?)')->execute([$orderId,'review_pending',$note]);
-            $pdo->commit();return ['order_no'=>$orderNo,'status'=>'review_pending','estimated_total_jpy'=>$totalJpy];
-        }catch(\Throwable $exception){$pdo->rollBack();throw $exception;}
+            $db->insert('order_status_history', ['order_id'=>$orderId,'from_status'=>null,'to_status'=>'review_pending','note'=>$note]);
+            return ['order_no'=>$orderNo,'status'=>'review_pending','estimated_total_jpy'=>$totalJpy];
+        });
+    }
+
+    public static function estimateTotalJpy(float $unitPrice,string $currency,int $quantity):int
+    {
+        $quantity=max(1,$quantity);
+        $krwPerJpy=max(0.000001,(float)\env_value('KRW_PER_JPY'));
+        $usdJpyRate=max(0,(float)\env_value('USD_JPY_RATE'));
+        return match(strtoupper($currency)){
+            'JPY'=>(int)ceil($unitPrice*$quantity),
+            'KRW'=>(int)ceil($unitPrice*$quantity/$krwPerJpy),
+            'USD'=>(int)ceil($unitPrice*$quantity*$usdJpyRate),
+            default=>0,
+        };
     }
 
     public function mine(int $userId):array
     {
-        $statement=Database::connection()->prepare('SELECT o.order_no,o.status,o.total_jpy,o.product_name,o.quantity,o.created_at,p.public_id product_public_id FROM orders o LEFT JOIN products p ON p.id=o.product_id WHERE o.user_id=? ORDER BY o.created_at DESC');
-        $statement->execute([$userId]);return $statement->fetchAll();
+        return $this->db->fetchAll('SELECT o.order_no,o.status,o.total_jpy,o.product_name,o.quantity,o.created_at,p.public_id product_public_id FROM orders o LEFT JOIN products p ON p.id=o.product_id WHERE o.user_id=:user_id ORDER BY o.created_at DESC', ['user_id' => $userId]);
     }
 }

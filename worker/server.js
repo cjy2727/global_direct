@@ -29,7 +29,7 @@ function parsePrice(value) {
   if (value == null) return null;
   const cleaned = String(value).replace(/[^0-9.,]/g, '').replace(/,/g, '');
   const number = Number.parseFloat(cleaned);
-  return Number.isFinite(number) && number > 0 ? Math.round(number) : null;
+  return Number.isFinite(number) && number > 0 ? Number(number.toFixed(2)) : null;
 }
 
 async function analyze(rawUrl) {
@@ -100,12 +100,15 @@ async function analyze(rawUrl) {
       if (!price) {
         const yenMatch = bodyText.match(/(?:¥|￥|JPY\s*)([0-9][0-9,]*)|([0-9][0-9,]*)\s*円/);
         const wonMatch = bodyText.match(/(?:₩|KRW\s*|￦\s*)([0-9][0-9,]*)|([0-9][0-9,]*)\s*원/);
+        const dollarMatch = bodyText.match(/(?:US\$|USD\s*|\$\s*)([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i);
         if (yenMatch) { price = yenMatch[1] || yenMatch[2]; currency = currency || 'JPY'; }
         else if (wonMatch) { price = wonMatch[1] || wonMatch[2]; currency = currency || 'KRW'; }
+        else if (dollarMatch) { price = dollarMatch[1]; currency = currency || 'USD'; }
       }
       if (!currency) {
         if (isRakuten || /¥|￥|円|JPY/.test(bodyText)) currency = 'JPY';
-        else currency = /₩|원|KRW/.test(bodyText) ? 'KRW' : 'UNKNOWN';
+        else if (/₩|원|KRW/.test(bodyText)) currency = 'KRW';
+        else currency = /US\$|USD|\$\s*[0-9]/i.test(bodyText) ? 'USD' : 'UNKNOWN';
       }
       const imageCandidates = [];
       const addImage = (value) => {
@@ -164,7 +167,8 @@ async function analyze(rawUrl) {
       return { title, price, currency, images, optionGroups: optionGroups.slice(0, 8), description: text(product.description) || text(meta('meta[property="og:description"]')), canonicalUrl: document.querySelector('link[rel="canonical"]')?.href || location.href, availability: text(offer.availability) };
     });
     const price = parsePrice(result.price);
-    return { ...result, price, sourceUrl: rawUrl, finalUrl: page.url(), status: result.title && price ? 'complete' : 'needs_review' };
+    const currency = String(result.currency || 'UNKNOWN').trim().toUpperCase();
+    return { ...result, price, currency, sourceUrl: rawUrl, finalUrl: page.url(), status: result.title && price ? 'complete' : 'needs_review' };
   } finally {
     await context.close();
     await browser.close();

@@ -29,8 +29,8 @@ final class RedisCache
 
     private function command(array $parts): string|int|null
     {
-        $host = \env_value('REDIS_HOST', 'redis');
-        $port = (int) \env_value('REDIS_PORT', '6379');
+        $host = \env_value('REDIS_HOST');
+        $port = (int) \env_value('REDIS_PORT');
         $socket = @stream_socket_client("tcp://{$host}:{$port}", $errorCode, $errorMessage, 0.35);
         if ($socket === false) {
             throw new RuntimeException("Redis connection failed: {$errorCode}");

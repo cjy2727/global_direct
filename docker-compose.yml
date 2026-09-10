@@ -2,7 +2,7 @@ services:
   nginx:
     image: nginx:1.27-alpine
     ports:
-      - "8088:80"
+      - "${APP_PORT}:80"
     volumes:
       - ./:/var/www/html:ro
       - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
@@ -14,18 +14,19 @@ services:
       context: .
       dockerfile: docker/php/Dockerfile
     environment:
-      APP_ENV: local
-      APP_DEBUG: "true"
-      WORKFLOW_STAGE: "1"
-      DB_HOST: mysql
-      DB_PORT: "3306"
-      DB_NAME: globaldirect
-      DB_USER: globaldirect
-      DB_PASSWORD: local_only_password
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      PRODUCT_WORKER_URL: http://playwright:3000
-      WORKER_TOKEN: local_worker_token_change_me
+      APP_ENV: "${APP_ENV}"
+      APP_DEBUG: "${APP_DEBUG}"
+      KRW_PER_JPY: "${KRW_PER_JPY}"
+      USD_JPY_RATE: "${USD_JPY_RATE}"
+      DB_HOST: "${DB_HOST}"
+      DB_PORT: "${DB_PORT}"
+      DB_NAME: "${DB_NAME}"
+      DB_USER: "${DB_USER}"
+      DB_PASSWORD: "${DB_PASSWORD}"
+      REDIS_HOST: "${REDIS_HOST}"
+      REDIS_PORT: "${REDIS_PORT}"
+      PRODUCT_WORKER_URL: "${PRODUCT_WORKER_URL}"
+      WORKER_TOKEN: "${WORKER_TOKEN}"
     volumes:
       - ./:/var/www/html
     depends_on:
@@ -41,7 +42,7 @@ services:
       context: ./worker
     init: true
     environment:
-      WORKER_TOKEN: local_worker_token_change_me
+      WORKER_TOKEN: "${WORKER_TOKEN}"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 5s
@@ -51,10 +52,10 @@ services:
   mysql:
     image: mysql:8.4
     environment:
-      MYSQL_DATABASE: globaldirect
-      MYSQL_USER: globaldirect
-      MYSQL_PASSWORD: local_only_password
-      MYSQL_ROOT_PASSWORD: local_root_password
+      MYSQL_DATABASE: "${MYSQL_DATABASE}"
+      MYSQL_USER: "${MYSQL_USER}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD}"
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./database/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
