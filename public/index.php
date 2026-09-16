@@ -150,7 +150,7 @@ if ($path === '/request') {
 }
 if ($path === '/cart') render('cart', ['title' => '장바구니']);
 if ($path === '/orders') render('orders', ['title' => '주문 조회']);
-if ($path === '/') render('home', ['title' => '한국 쇼핑을 더 가깝게']);
+if ($path === '/') render('home', ['title' => '전 세계 쇼핑을 더 가깝게']);
 
 http_response_code(404);
 render('not-found', ['title' => '페이지를 찾을 수 없습니다']);

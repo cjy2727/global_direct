@@ -1,10 +1,10 @@
 <section class="hero">
     <div class="hero-copy">
-        <span class="eyebrow">해외 구매대행 서비스</span>
+        <span class="eyebrow">전 세계 쇼핑몰 구매대행</span>
         <h1>원하는 해외 상품을<br>
             <em>URL 하나</em>로 간편하게.
         </h1>
-        <p>상품 페이지를 자동으로 분석해 이미지, 가격과 옵션이 담긴 상세 페이지를 만들어 드립니다.</p>
+        <p>전 세계 쇼핑몰의 상품을 확인하고 원하는 국가로 구매대행을 신청하세요. 구매와 배송 가능 여부는 접수 후 안내합니다.</p>
         <div class="trust-row">
             <span>✓ 상품 정보 자동 분석</span>
             <span>✓ 옵션과 이미지 확인</span>

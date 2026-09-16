@@ -16,18 +16,25 @@ final class OrderService
     public function createFromProduct(array $user, string $publicId, array $input): array
     {
         $product = (new ProductService($this->db))->find($publicId);
-        $quantity = max(1, min(20, (int) ($input['quantity'] ?? 1)));
-        $address = $input['address'] ?? [];
-
-        foreach (['recipient', 'postal_code', 'region', 'city', 'address1', 'phone'] as $field) {
-            if (trim((string) ($address[$field] ?? '')) === '') {
-                throw new RuntimeException('배송지 필수 정보를 모두 입력해 주세요.');
-            }
+        $quantity = filter_var($input['quantity'] ?? 1, FILTER_VALIDATE_INT);
+        if ($quantity === false || $quantity < 1 || $quantity > 20) {
+            throw new RuntimeException('수량은 1~20개로 입력해 주세요.');
+        }
+        $address = GlobalCommerce::address($input['address'] ?? null);
+        $sourceCountry = GlobalCommerce::country($input['source_country'] ?? null, true);
+        $quoteCurrency = $input['quote_currency'] ?? '';
+        if (!is_string($quoteCurrency)) throw new RuntimeException('견적 통화를 확인해 주세요.');
+        $requestNote = $input['request_note'] ?? '';
+        if (!is_string($requestNote) || strlen($requestNote) > 4000) {
+            throw new RuntimeException('요청사항은 1000자 이내로 입력해 주세요.');
         }
 
         $options = $input['selected_options'] ?? [];
         if (!is_array($options)) {
-            $options = [];
+            throw new RuntimeException('상품 옵션을 확인해 주세요.');
+        }
+        foreach ($options as $value) {
+            if (!is_string($value)) throw new RuntimeException('상품 옵션을 확인해 주세요.');
         }
 
         $optionText = implode(' / ', array_map(
@@ -35,10 +42,22 @@ final class OrderService
             array_keys($options),
             array_values($options)
         ));
-        $unitPrice = (float) ($product['price'] ?? 0);
-        $totalJpy = self::estimateTotalJpy($unitPrice, (string) ($product['currency'] ?? ''), $quantity);
+        if (strlen($optionText) > 500) throw new RuntimeException('상품 옵션 입력이 너무 깁니다.');
+        $quote = GlobalCommerce::quote(
+            isset($product['price']) ? (float) $product['price'] : null,
+            (string) ($product['currency'] ?? ''), $quoteCurrency, $quantity,
+            $product['analysis_status'] === 'complete'
+        );
+        $commerce = [
+            'version' => 1,
+            'source_country' => $sourceCountry,
+            'destination_country' => $address['country_code'],
+            'route_status' => 'review_pending',
+            'quote' => $quote,
+            'request_note' => $requestNote,
+        ];
         $orderNo = 'GD-' . date('ymd') . '-' . strtoupper(bin2hex(random_bytes(3)));
-        return $this->db->transaction(function (SimpleMySql $db) use ($user, $product, $orderNo, $totalJpy, $optionText, $quantity, $address, $input): array {
+        return $this->db->transaction(function (SimpleMySql $db) use ($user, $product, $orderNo, $commerce, $optionText, $quantity, $address, $input): array {
             $orderId = (int) $db->insert('orders', [
                 'user_id' => $user['id'],
                 'product_id' => $product['id'],
@@ -46,7 +65,9 @@ final class OrderService
                 'customer_name' => $user['name'],
                 'customer_email' => $user['email'],
                 'status' => 'review_pending',
-                'total_jpy' => $totalJpy,
+                // 이전 스키마와의 호환용 값이며 신규 주문 금액은 commerce_json을 사용한다.
+                'total_jpy' => 0,
+                'commerce_json' => json_encode($commerce, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
                 'source_url' => $product['source_url'],
                 'product_name' => $product['title'],
                 'option_text' => $optionText,
@@ -67,7 +88,7 @@ final class OrderService
             return [
                 'order_no' => $orderNo,
                 'status' => 'review_pending',
-                'estimated_total_jpy' => $totalJpy,
+                'commerce' => $commerce,
             ];
         });
     }
@@ -92,6 +113,7 @@ final class OrderService
             SELECT o.order_no,
                    o.status,
                    o.total_jpy,
+                   o.commerce_json,
                    o.product_name,
                    o.quantity,
                    o.created_at,
@@ -102,6 +124,10 @@ final class OrderService
              ORDER BY o.created_at DESC
             SQL;
 
-        return $this->db->fetchAll($sql, ['user_id' => $userId]);
+        return array_map(static function (array $order): array {
+            $order['commerce'] = $order['commerce_json'] === null ? null : json_decode($order['commerce_json'], true);
+            unset($order['commerce_json']);
+            return $order;
+        }, $this->db->fetchAll($sql, ['user_id' => $userId]));
     }
 }

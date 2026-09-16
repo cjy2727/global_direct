@@ -1,5 +1,43 @@
 const money = new Intl.NumberFormat('ko-KR');
 
+// 긴 상세 이미지는 미리보기로 제공하며 이미지 로딩 후에도 펼친 상태를 유지한다.
+const descriptionBody = document.querySelector('#product-description-body');
+const descriptionToggle = document.querySelector('.product-description-toggle');
+if (descriptionBody && descriptionToggle) {
+  let descriptionExpanded = false;
+  const updateDescriptionPreview = () => {
+    const limit = parseFloat(getComputedStyle(descriptionBody).getPropertyValue('--preview-height'));
+    const overflowing = descriptionBody.scrollHeight > limit + 2;
+    descriptionBody.classList.toggle('is-collapsed', overflowing && !descriptionExpanded);
+    descriptionToggle.hidden = !overflowing;
+    descriptionToggle.setAttribute('aria-expanded', String(descriptionExpanded));
+    descriptionToggle.textContent = descriptionExpanded ? '상세설명 접기 ↑' : '상세설명 전체보기 ↓';
+  };
+  descriptionToggle.addEventListener('click', () => {
+    descriptionExpanded = !descriptionExpanded;
+    updateDescriptionPreview();
+    if (!descriptionExpanded) document.querySelector('#product-description').scrollIntoView({ block: 'start' });
+  });
+  descriptionBody.querySelectorAll('img').forEach((image) => image.addEventListener('load', updateDescriptionPreview));
+  window.addEventListener('resize', updateDescriptionPreview);
+  updateDescriptionPreview();
+}
+
+// 국가명은 화면 언어로 표시하고 서버에는 국가 코드만 전달한다.
+document.querySelectorAll('[data-country-select]').forEach((select) => {
+  if (typeof Intl.DisplayNames !== 'function') return;
+  const names = new Intl.DisplayNames([document.documentElement.lang || 'ko'], { type: 'region' });
+  Array.from(select.options).filter((option) => option.value).forEach((option) => {
+    option.textContent = `${names.of(option.value)} (${option.value})`;
+  });
+});
+
+function formatAmount(amount, currency) {
+  return new Intl.NumberFormat(document.documentElement.lang || 'ko', {
+    style: 'currency', currency, currencyDisplay: 'code',
+  }).format(amount);
+}
+
 const statusLabels = {
   review_pending: '신청 검토 중',
   confirmed: '상품 확인 완료',
@@ -155,9 +193,12 @@ async function refreshAccount() {
   const result = await fetch('/api/orders/mine').then((response) => response.json());
   document.querySelector('#my-orders').innerHTML = result.orders.length
     ? result.orders.map((order) => {
-      const total = order.total_jpy > 0
-        ? `예상 ¥${money.format(order.total_jpy)}`
-        : '금액 확인 중';
+      const quote = order.commerce?.quote;
+      const total = quote
+        ? (quote.product_subtotal === null ? '상품 금액 확인 중'
+          : `상품 소계 ${escapeHtml(formatAmount(quote.product_subtotal, quote.quote_currency))}`)
+          + ' · 배송비·수수료·세금 및 총액 확인 중'
+        : (order.total_jpy > 0 ? `기존 주문 예상 JPY ${money.format(order.total_jpy)}` : '금액 확인 중');
       return `<div class="mini-order"><strong>${escapeHtml(order.order_no)}</strong><span>${escapeHtml(statusLabels[order.status] || order.status)} · ${total}</span></div>`;
     }).join('')
     : '<p class="muted">아직 접수된 주문이 없습니다.</p>';
@@ -196,6 +237,15 @@ if (document.querySelector('#account-summary')) refreshAccount();
 const requestForm = document.querySelector('#request-form');
 if (requestForm) {
   const productId = requestForm.dataset.productId;
+  const addressRequirements = JSON.parse(requestForm.dataset.addressRequirements);
+  const updateAddressRequirements = () => {
+    const country = requestForm.country_code.value;
+    Object.entries(addressRequirements).forEach(([field, countries]) => {
+      requestForm.elements[field].required = countries.includes(country);
+    });
+  };
+  requestForm.country_code.addEventListener('change', updateAddressRequirements);
+  updateAddressRequirements();
 
   try {
     const saved = JSON.parse(sessionStorage.getItem(`globaldirect:${productId}`) || 'null');
@@ -215,10 +265,13 @@ if (requestForm) {
     const raw = Object.fromEntries(new FormData(requestForm));
     const body = {
       product_id: productId,
+      source_country: raw.source_country,
+      quote_currency: raw.quote_currency,
       quantity: raw.quantity,
       request_note: raw.request_note,
       selected_options: selectedOptions(requestForm),
       address: {
+        country_code: raw.country_code,
         recipient: raw.recipient,
         postal_code: raw.postal_code,
         region: raw.region,
@@ -243,6 +296,7 @@ if (requestForm) {
     if (data.ok) {
       sessionStorage.removeItem(`globaldirect:${productId}`);
       requestForm.reset();
+      updateAddressRequirements();
     }
   });
 }

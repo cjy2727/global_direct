@@ -3,6 +3,8 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 COPY server.js ./
+COPY product-content.js ./
+COPY product-options.js ./
 USER pwuser
 EXPOSE 3000
 CMD ["npm", "start"]

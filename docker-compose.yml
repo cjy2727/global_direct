@@ -49,6 +49,9 @@ services:
       WORKER_TOKEN: "${WORKER_TOKEN}"
     volumes:
       - ./worker/server.js:/app/server.js:ro
+      - ./worker/product-content.js:/app/product-content.js:ro
+      - ./worker/product-options.js:/app/product-options.js:ro
+      - ./worker/tests:/app/tests:ro
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 5s
@@ -68,6 +71,7 @@ services:
       - ./database/002_commerce.sql:/docker-entrypoint-initdb.d/002-commerce.sql:ro
       - ./database/003_remove_payment_admin.sql:/docker-entrypoint-initdb.d/003-remove-payment-admin.sql:ro
       - ./database/004_products_cart.sql:/docker-entrypoint-initdb.d/004-products-cart.sql:ro
+      - ./database/005_global_orders.sql:/docker-entrypoint-initdb.d/005-global-orders.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 5s

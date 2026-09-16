@@ -1,8 +1,8 @@
 # GlobalDirect
 
-GlobalDirect는 해외 쇼핑몰 상품 URL을 분석하고, 한국 상품의 일본 구매대행 신청 흐름을 검증하기 위한 Docker 기반 MVP입니다.
+GlobalDirect는 전 세계 고객이 전 세계 쇼핑몰 상품의 구매대행을 신청하는 Docker 기반 MVP입니다. 구매 국가, 배송 국가, 상품 원화폐와 견적 통화를 각각 관리합니다.
 
-고객은 상품 URL을 입력해 상품명, 가격, 이미지와 옵션을 확인하고 장바구니에 담거나 구매대행을 신청할 수 있습니다. 회원가입과 로그인, 일본 배송지 입력, 주문 생성 및 내 주문 조회까지 구현되어 있습니다.
+고객은 상품 URL을 입력해 상품명, 가격, 이미지와 옵션을 확인하고 장바구니에 담거나 구매대행을 신청할 수 있습니다. 회원가입과 로그인, 국가별 배송지 입력, 주문 생성 및 내 주문 조회까지 구현되어 있습니다. 국가 목록은 배송 가능 국가 목록이 아니며 실제 구매·배송 경로는 접수 후 검토합니다. 화면 언어는 현재 한국어입니다.
 
 > [!IMPORTANT]
 > 이 프로젝트는 개발·검증용 MVP입니다. 실제 쇼핑몰 주문, 결제, 배송사 API 및 운영자 처리는 연결되어 있지 않습니다. 화면의 예상 금액과 주문 상태를 실제 청구 또는 배송 결과로 사용하지 마세요.
@@ -12,9 +12,10 @@ GlobalDirect는 해외 쇼핑몰 상품 URL을 분석하고, 한국 상품의 �
 - Playwright Chromium을 이용한 외부 상품 페이지 분석
 - JSON-LD, Open Graph 및 DOM 기반 상품명·가격·이미지·옵션 추출
 - 분석한 상품과 원본 응답 스냅샷의 MySQL 저장
+- 대표 이미지·상품 갤러리와 상세설명 이미지 분리, 설명 문구·규격·소재 등의 하단 상세 영역
 - 세션 기반 장바구니와 상품별 옵션·수량·요청사항 저장
 - 회원가입, 로그인, 로그아웃 및 로그인 세션 확인
-- 일본 배송지를 포함한 구매대행 신청
+- 구매국·배송국·견적 통화 선택 및 배송지와 요청사항을 보존하는 구매대행 신청
 - 로그인 사용자의 주문 목록 조회
 - 주문 상태 이력 및 허용된 상태 전이 모델
 - Redis 기반 상품 분석 진행 상태 캐시
@@ -26,13 +27,17 @@ GlobalDirect는 해외 쇼핑몰 상품 URL을 분석하고, 한국 상품의 �
 상품 분석기는 특정 쇼핑몰의 공식 API가 아니라 공개 웹페이지를 읽습니다. 사이트 구조 변경, 로그인 요구, 지역 제한 및 자동화 접근 차단에 따라 결과가 누락되거나 실패할 수 있습니다.
 
 - 일반 상품 페이지: 구조화 데이터, 메타 태그와 DOM을 순서대로 확인합니다.
+- 이미지: 상품 갤러리 → 해당 상품의 구조화 이미지 → `og:image` 순서로 선택하며 일반 `main` 영역 전체의 이미지는 수집하지 않습니다. 대표 이미지는 갤러리 첫 이미지입니다. 인식 가능한 갤러리·설명 영역에만 적용되므로 사이트별 누락은 있을 수 있습니다.
+- 상세설명: 원본 설명 영역의 문구·이미지·규격을 순서대로 표시합니다. 설명을 찾지 못하면 구조화 설명과 메타 설명을 사용하며, 이마저 없으면 원본 확인 안내를 표시합니다. 광고·추천·리뷰 영역과 스크립트·iframe 등은 제외하고 원본 HTML을 직접 실행하지 않습니다. iframe 안의 설명이나 사용자 조작 후 로딩되는 설명은 수집하지 않습니다.
+- 저장: 상단 이미지는 기존 `product_images`, 상세 블록은 기존 `products.raw_json`의 `content`에 저장합니다. 기존 상품은 저장된 설명으로 표시하며 재분석 없이 과거 이미지 구성을 바꾸지 않습니다.
 - Rakuten: JPY 가격과 구매 방식 옵션 등 일부 사이트 특화 정규화를 적용합니다.
 - Coupang: 자동화 요청이 HTTP 403으로 차단되면 상품 ID만 보존하고 `needs_review` 상태로 저장합니다. 이 경우 가격, 이미지와 옵션은 자동으로 확보되지 않습니다.
 - 미국 상점: 구조화 데이터의 USD 통화를 우선 사용하고, 정보가 없을 때 `US$`, `USD`, `$` 표기를 보완 인식합니다. Amazon, eBay, Walmart 등 개별 사이트의 접근 제한이나 구조 변경에 따라 분석이 실패할 수 있습니다.
-- 가격 통화: 주문 예상액 계산은 `KRW`, `JPY`, `USD`를 처리합니다. 알 수 없는 통화는 예상 금액이 0이 될 수 있으므로 수동 검토가 필요합니다.
+- 가격 통화: 원화폐와 견적 통화가 같으면 상품 소계를 계산합니다. 서로 다른 통화의 자동 환산은 설정된 `KRW`, `JPY`, `USD` 환율만 사용합니다. 미지원 환율·가격 미확인·분석 미완료 상품은 소계를 `null`로 보존하고 수동 견적으로 안내합니다.
 - 환산: 기본값은 `9.15 KRW/JPY`, `150 JPY/USD`이며 환경 변수로 조정할 수 있습니다. 실시간 환율이 아닙니다.
 - 주문: 신청 내용을 `review_pending` 상태로 저장할 뿐 실제 판매처 주문이나 결제는 실행하지 않습니다.
 - 배송: 검사 및 배송 데이터 구조는 있지만 배송사 연동과 운영 화면은 구현되어 있지 않습니다.
+- 금액 스냅샷: 새 주문의 `commerce_json`에 원화폐·단가·수량·견적 통화·환율·계산 시각을 저장합니다. 배송비·수수료·세금·총액은 확정 전 `null`이며 상품 소계를 총액으로 표시하지 않습니다. 결제 통화는 아직 지정하지 않습니다.
 
 ## 사용자 흐름
 
@@ -40,8 +45,8 @@ GlobalDirect는 해외 쇼핑몰 상품 URL을 분석하고, 한국 상품의 �
 2. PHP 애플리케이션이 내부 Playwright 서비스에 분석을 요청합니다.
 3. 분석 결과가 MySQL에 저장되고 상품 상세 화면으로 이동합니다.
 4. 상품 옵션과 수량을 선택해 장바구니에 담거나 구매대행 신청 화면으로 이동합니다.
-5. 회원가입 또는 로그인 후 일본 배송지와 요청사항을 입력합니다.
-6. 신청이 접수되면 주문번호와 예상 JPY 금액이 생성됩니다.
+5. 회원가입 또는 로그인 후 구매국, 배송국, 견적 통화, 배송지와 요청사항을 입력합니다.
+6. 신청이 접수되면 주문번호와 견적 스냅샷이 생성됩니다. 미확인 비용은 운영자 확인 대상으로 남습니다.
 7. 내 계정에서 본인의 주문 목록과 현재 상태를 확인합니다.
 
 ```mermaid
@@ -58,7 +63,7 @@ flowchart TD
     H --> I
     I --> J{로그인 상태?}
     J -- 아니요 --> K[회원가입 또는 로그인]
-    J -- 예 --> L[일본 배송지·요청사항 입력]
+    J -- 예 --> L[배송 국가·통화·배송지·요청사항 입력]
     K --> L
     L --> M[구매대행 신청 저장]
     M --> N[주문번호 생성]
@@ -116,6 +121,8 @@ Compose 서비스는 다음과 같습니다.
 Windows에서는 Docker Desktop의 Linux 컨테이너 엔진이 실행 중이어야 합니다. Docker 명령이 설치되어 있어도 엔진이 정지되어 있으면 실행할 수 없습니다.
 
 ## 빠른 시작
+
+기존 데이터가 있는 설치는 MySQL 실행 후 `docker compose run --rm --no-deps php php src/migrate-global.php`로 추가 열을 적용합니다. 이 명령은 기존 주문을 수정하지 않으며 재실행 가능합니다. 새 설치에는 `005_global_orders.sql`이 자동 적용됩니다.
 
 저장소를 받은 뒤 프로젝트 루트에서 실행합니다.
 
@@ -269,10 +276,24 @@ PHP 테스트는 실행 중인 `php` 컨테이너에서 수행합니다.
 
 ```powershell
 docker compose exec php php -d zend.assertions=1 -d assert.exception=1 tests/OrderWorkflowTest.php
+docker compose exec php php tests/GlobalCommerceTest.php
+docker compose exec php php tests/GlobalOrderTest.php
+docker compose exec php php tests/ProductContentTest.php
+docker compose exec php php tests/ProductContentStorageTest.php
+docker compose exec playwright node tests/product-content.test.js
 docker compose exec php php -d zend.assertions=1 -d assert.exception=1 tests/SimpleMySqlTest.php
 ```
 
 `SimpleMySqlTest.php`는 MySQL 연결을 사용하며 테스트 데이터를 트랜잭션에서 롤백합니다. 테스트 실행 전 컨테이너와 데이터베이스가 정상 상태인지 확인하세요.
+
+`GlobalCommerceTest.php`는 DB 없이 국가·배송지·통화·미확인 금액을 검사합니다. `GlobalOrderTest.php`는 연결 범위의 임시 테이블과 가상 데이터만 사용해 주문 스냅샷·요청사항 보존·기존 주문 호환성을 검사합니다.
+
+상품 상세 테스트는 외부 접속을 차단한 Chromium DOM fixture, PHP 안전 출력, 임시 DB 스냅샷 조회를 검증합니다. PC/모바일 표시 테스트는 아래처럼 실행합니다. 실제 쇼핑몰 분석 성공 여부와는 별도입니다.
+
+```powershell
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+docker compose exec -T php php tests/ProductContentTest.php --render | docker compose exec -T playwright node tests/product-page.test.js
+```
 
 ## Docker 이미지 빌드 및 반출
 

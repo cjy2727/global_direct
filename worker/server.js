@@ -2,6 +2,8 @@ import http from 'node:http';
 import dns from 'node:dns/promises';
 import net from 'node:net';
 import { chromium } from 'playwright';
+import { extractProductContent } from './product-content.js';
+import { extractProductOptions } from './product-options.js';
 
 const PORT = 3000;
 const TOKEN = process.env.WORKER_TOKEN || '';
@@ -43,7 +45,8 @@ function parsePrice(value) {
   if (value == null) return null;
   const cleaned = String(value).replace(/[^0-9.,]/g, '').replace(/,/g, '');
   const number = Number.parseFloat(cleaned);
-  return Number.isFinite(number) && number > 0 ? Number(number.toFixed(2)) : null;
+  // Preserve source precision before applying the quote currency's rounding rules.
+  return Number.isFinite(number) && number > 0 ? Number(number.toFixed(4)) : null;
 }
 
 async function analyze(rawUrl) {
@@ -87,7 +90,6 @@ async function analyze(rawUrl) {
     await page.waitForTimeout(1200);
     const result = await page.evaluate(() => {
       const text = (value) => typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
-      const absolute = (value) => { try { return new URL(value, location.href).href; } catch { return null; } };
       const products = [];
       for (const node of document.querySelectorAll('script[type="application/ld+json"]')) {
         try {
@@ -97,11 +99,27 @@ async function analyze(rawUrl) {
             if (Array.isArray(item)) return item.forEach(visit);
             if (item['@type'] === 'Product' || (Array.isArray(item['@type']) && item['@type'].includes('Product'))) products.push(item);
             if (item['@graph']) visit(item['@graph']);
+            if (item.mainEntity) visit(item.mainEntity);
           };
           visit(parsed);
         } catch {}
       }
-      const product = products[0] || {};
+      // 추천 상품이 먼저 선언된 페이지에서는 현재 URL/제목과 일치하는 상품을 우선한다.
+      const currentUrl = document.querySelector('link[rel="canonical"]')?.href || location.href;
+      const heading = text(document.querySelector('h1')?.textContent).toLowerCase();
+      const productScore = (item) => {
+        let score = 0;
+        for (const candidate of [item.url, item['@id'], item.mainEntityOfPage?.['@id']]) {
+          try {
+            const url = new URL(candidate, location.href);
+            const current = new URL(currentUrl);
+            if (url.origin === current.origin && url.pathname === current.pathname) score += 10;
+          } catch {}
+        }
+        if (heading && text(item.name).toLowerCase() === heading) score += 5;
+        return score;
+      };
+      const product = products.sort((a, b) => productScore(b) - productScore(a))[0] || {};
       const offer = Array.isArray(product.offers) ? product.offers[0] : (product.offers || {});
       const meta = (selector) => document.querySelector(selector)?.getAttribute('content') || '';
       const hostname = location.hostname.toLowerCase();
@@ -130,23 +148,6 @@ async function analyze(rawUrl) {
         else if (/₩|원|KRW/.test(bodyText)) currency = 'KRW';
         else currency = /US\$|USD|\$\s*[0-9]/i.test(bodyText) ? 'USD' : 'UNKNOWN';
       }
-      const imageCandidates = [];
-      const addImage = (value) => {
-        if (Array.isArray(value)) return value.forEach(addImage);
-        if (value && typeof value === 'object') return addImage(value.url || value.contentUrl);
-        const raw = text(value == null ? '' : String(value));
-        if (!raw || /^(?:undefined|null|about:blank)$/i.test(raw)) return;
-        const url = absolute(raw);
-        if (url?.startsWith('http') && !/\/(?:undefined|null)(?:[?#]|$)/i.test(url)) imageCandidates.push(url);
-      };
-      addImage(product.image); addImage(meta('meta[property="og:image"]'));
-      const productImages = document.querySelectorAll(
-        'main img, [class*="product"] img, [id*="product"] img',
-      );
-      for (const img of productImages) {
-        addImage(img.currentSrc || img.src || img.dataset.src || img.dataset.original);
-      }
-      const images = [...new Set(imageCandidates)].filter((url) => !url.startsWith('data:')).slice(0, 12);
       const optionGroups = [];
       const addGroup = (name, values) => {
         const rawName = text(typeof name === 'object' ? (name.target || name.origin) : name);
@@ -199,16 +200,22 @@ async function analyze(rawUrl) {
         title,
         price,
         currency,
-        images,
+        structuredProduct: product,
         optionGroups: optionGroups.slice(0, 8),
         description: text(product.description) || text(meta('meta[property="og:description"]')),
         canonicalUrl: document.querySelector('link[rel="canonical"]')?.href || location.href,
         availability: text(offer.availability),
       };
     });
+    const content = await page.evaluate(extractProductContent, { product: result.structuredProduct });
+    let typedOptions = await page.evaluate(extractProductOptions, {});
+    // 외부 스크립트가 옵션을 숨기거나 제거해도 응답 HTML의 명시적 상품 옵션을 보존한다.
+    if (!typedOptions.length) typedOptions = await page.evaluate(extractProductOptions, { html: await response.text() });
+    if (typedOptions.length) result.optionGroups = typedOptions;
+    delete result.structuredProduct;
     const price = parsePrice(result.price);
     const currency = String(result.currency || 'UNKNOWN').trim().toUpperCase();
-    return { ...result, price, currency, sourceUrl: rawUrl, finalUrl: page.url(), status: result.title && price ? 'complete' : 'needs_review' };
+    return { ...result, ...content, price, currency, sourceUrl: rawUrl, finalUrl: page.url(), status: result.title && price ? 'complete' : 'needs_review' };
   } finally {
     await context.close();
     await browser.close();

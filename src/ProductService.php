@@ -69,7 +69,10 @@ final class ProductService
             'SELECT option_name, values_json FROM product_options WHERE product_id = :product_id ORDER BY sort_order',
             ['product_id' => $product['id']]
         );
-        $product['images'] = array_column($images, 'image_url');
+        $product['images'] = array_values(array_filter(array_column($images, 'image_url'), static fn($url) => ProductContent::imageUrl($url) !== null));
+        $snapshot = json_decode($product['raw_json'] ?? '{}', true);
+        $product['detail_blocks'] = ProductContent::details(is_array($snapshot) ? $snapshot : [], $product['description'] ?? null);
+        $product['main_image'] = $product['images'][0] ?? null;
         $product['options'] = array_map(static fn(array $row): array => [
             'name' => $row['option_name'],
             'values' => json_decode($row['values_json'], true) ?: [],

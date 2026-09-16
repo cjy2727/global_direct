@@ -1,11 +1,8 @@
 <?php
 $images = $product['images'] ?? [];
 $options = $product['options'] ?? [];
-$currency = [
-    'KRW' => '₩',
-    'JPY' => '¥',
-    'USD' => '$',
-][$product['currency']] ?? $product['currency'] . ' ';
+$detailBlocks = $product['detail_blocks'] ?? [];
+$currency = $product['currency'] . ' ';
 $sourceHost = strtolower((string) $product['source_host']);
 $isCoupang = $sourceHost === 'coupang.com' || str_ends_with($sourceHost, '.coupang.com');
 ?>
@@ -56,7 +53,7 @@ $isCoupang = $sourceHost === 'coupang.com' || str_ends_with($sourceHost, '.coupa
 
         <div class="product-price">
             <?php if ($product['price']): ?>
-                <?= htmlspecialchars($currency, ENT_QUOTES, 'UTF-8') ?><?= number_format((float) $product['price']) ?>
+                <?= htmlspecialchars($currency, ENT_QUOTES, 'UTF-8') ?><?= number_format((float) $product['price'], \App\GlobalCommerce::fractionDigits($product['currency'])) ?>
             <?php else: ?>
                 <span>가격 확인 필요</span>
             <?php endif; ?>
@@ -73,11 +70,7 @@ $isCoupang = $sourceHost === 'coupang.com' || str_ends_with($sourceHost, '.coupa
             </div>
         <?php endif; ?>
 
-        <?php if ($product['description']): ?>
-            <p class="product-description">
-                <?= htmlspecialchars($product['description'], ENT_QUOTES, 'UTF-8') ?>
-            </p>
-        <?php endif; ?>
+        <a class="product-description-link" href="#product-description">상품 상세설명 보기 ↓</a>
 
         <form id="product-action-form">
             <?php foreach ($options as $index => $option): ?>
@@ -128,3 +121,56 @@ $isCoupang = $sourceHost === 'coupang.com' || str_ends_with($sourceHost, '.coupa
         </form>
     </div>
 </section>
+
+<div class="product-information">
+    <nav class="product-section-links" aria-label="상품 상세 정보">
+        <a href="#product-description">상품 상세설명</a>
+        <a href="#purchase-guide">구매대행 안내</a>
+    </nav>
+
+    <section id="product-description" class="product-description-section" aria-labelledby="description-title">
+        <header>
+            <span class="eyebrow">PRODUCT DETAILS</span>
+            <h2 id="description-title">상품 상세설명</h2>
+            <p class="muted">판매처에서 확인한 상품 정보입니다. 최신 정보는 원본 상품 페이지를 확인해 주세요.</p>
+        </header>
+        <?php if ($detailBlocks): ?>
+            <div id="product-description-body" class="product-description-content">
+                <?php foreach ($detailBlocks as $block): ?>
+                    <?php if ($block['type'] === 'image'): ?>
+                        <figure>
+                            <img src="<?= htmlspecialchars($block['url'], ENT_QUOTES, 'UTF-8') ?>"
+                                alt="<?= htmlspecialchars($block['alt'] ?: '상품 상세 이미지', ENT_QUOTES, 'UTF-8') ?>"
+                                loading="lazy" decoding="async" referrerpolicy="no-referrer">
+                        </figure>
+                    <?php elseif ($block['type'] === 'heading'): ?>
+                        <h3><?= htmlspecialchars($block['text'], ENT_QUOTES, 'UTF-8') ?></h3>
+                    <?php elseif ($block['type'] === 'specification'): ?>
+                        <dl class="product-specification">
+                            <dt><?= htmlspecialchars($block['name'], ENT_QUOTES, 'UTF-8') ?></dt>
+                            <dd><?= htmlspecialchars($block['text'], ENT_QUOTES, 'UTF-8') ?></dd>
+                        </dl>
+                    <?php else: ?>
+                        <p><?= htmlspecialchars($block['text'], ENT_QUOTES, 'UTF-8') ?></p>
+                    <?php endif; ?>
+                <?php endforeach; ?>
+            </div>
+            <button type="button" class="product-description-toggle" aria-controls="product-description-body" aria-expanded="false" hidden>상세설명 전체보기 ↓</button>
+        <?php else: ?>
+            <div class="product-description-empty">
+                상세설명을 자동으로 가져오지 못했습니다. 원본 상품 페이지에서 확인해 주세요.
+            </div>
+        <?php endif; ?>
+        <a class="source-host" href="<?= htmlspecialchars($product['final_url'], ENT_QUOTES, 'UTF-8') ?>"
+            target="_blank" rel="noopener noreferrer">원본 상품 페이지 보기 ↗</a>
+    </section>
+
+    <section id="purchase-guide" class="product-purchase-guide" aria-labelledby="purchase-guide-title">
+        <h2 id="purchase-guide-title">구매대행 안내</h2>
+        <ul>
+            <li>신청 후 상품 재고, 선택 옵션과 구매 가능 여부를 확인합니다.</li>
+            <li>배송 국가에 따른 배송 가능 여부와 배송비·수수료·세금은 별도로 확인합니다.</li>
+            <li>판매처의 상품 정보와 가격은 변경될 수 있으며, 표시 금액은 최종 결제 금액이 아닙니다.</li>
+        </ul>
+    </section>
+</div>

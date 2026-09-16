@@ -12,8 +12,8 @@ $pageTitle = ($title ?? '글로벌다이렉트') . ' · 글로벌다이렉트';
     <title><?= htmlspecialchars($pageTitle, ENT_QUOTES, 'UTF-8') ?></title>
     <link rel="stylesheet" href="/assets/app.css">
     <link rel="stylesheet" href="/assets/account.css">
-    <link rel="stylesheet" href="/assets/product.css">
-    <script src="/assets/app.js" defer></script>
+    <link rel="stylesheet" href="/assets/product.css?v=<?= filemtime(dirname(__DIR__) . '/public/assets/product.css') ?>">
+    <script src="/assets/app.js?v=<?= filemtime(dirname(__DIR__) . '/public/assets/app.js') ?>" defer></script>
 </head>
 
 <body data-page="<?= htmlspecialchars($view, ENT_QUOTES, 'UTF-8') ?>">
