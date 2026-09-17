@@ -73,32 +73,7 @@ $isCoupang = $sourceHost === 'coupang.com' || str_ends_with($sourceHost, '.coupa
         <a class="product-description-link" href="#product-description">상품 상세설명 보기 ↓</a>
 
         <form id="product-action-form">
-            <?php foreach ($options as $index => $option): ?>
-                <label>
-                    <?= htmlspecialchars($option['name'], ENT_QUOTES, 'UTF-8') ?>
-                    <select
-                        name="option_<?= $index ?>"
-                        data-option-name="<?= htmlspecialchars($option['name'], ENT_QUOTES, 'UTF-8') ?>"
-                        required>
-                        <option value="">선택해 주세요</option>
-                        <?php foreach ($option['values'] as $value): ?>
-                            <option value="<?= htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') ?>">
-                                <?= htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </label>
-            <?php endforeach; ?>
-
-            <?php if (!$options): ?>
-                <label>
-                    옵션 직접 입력
-                    <input
-                        name="manual_option"
-                        data-option-name="직접 입력 옵션"
-                        placeholder="색상, 크기 등 원하는 옵션을 입력해 주세요">
-                </label>
-            <?php endif; ?>
+            <?php require __DIR__ . '/product-options.php'; ?>
 
             <label>
                 수량

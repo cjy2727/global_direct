@@ -15,9 +15,10 @@ final class CartService
         $this->db = $db ?? new SimpleMySql();
     }
 
-    public function add(string $productPublicId, int $quantity, array $options, string $note): array
+    public function add(string $productPublicId, int $quantity, mixed $options, string $note): array
     {
         $product = (new ProductService($this->db))->find($productPublicId);
+        $validated = ProductOptions::validate($product['options'], $options);
         $cartId = $this->cartId();
         $characters = preg_split('//u', trim($note), -1, PREG_SPLIT_NO_EMPTY) ?: [];
         $safeNote = implode('', array_slice($characters, 0, 1000));
@@ -25,7 +26,7 @@ final class CartService
             'cart_id' => $cartId,
             'product_id' => $product['id'],
             'quantity' => max(1, min(20, $quantity)),
-            'selected_options_json' => json_encode($options, JSON_UNESCAPED_UNICODE),
+            'selected_options_json' => json_encode($validated['selected'], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
             'request_note' => $safeNote,
         ]);
         return ['count' => $this->count($cartId)];
@@ -55,8 +56,10 @@ final class CartService
             SQL;
         $items = $this->db->fetchAll($sql, ['cart_id' => $cartId]);
 
-        return array_map(static function (array $item): array {
+        return array_map(function (array $item): array {
             $item['selected_options'] = json_decode($item['selected_options_json'], true) ?: [];
+            $product = (new ProductService($this->db))->find($item['public_id']);
+            $item['option_labels'] = ProductOptions::displayLabels($product['options'], $item['selected_options']);
             unset($item['selected_options_json']);
             return $item;
         }, $items);

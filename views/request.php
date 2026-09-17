@@ -35,32 +35,7 @@ $currency = $product['currency'] . ' ';
         </label>
         <p class="muted">견적 통화는 결제 통화와 별개입니다. 환율·배송비·구매 가능 여부는 접수 후 확인합니다.</p>
 
-        <?php foreach ($product['options'] as $index => $option): ?>
-            <label>
-                <?= htmlspecialchars($option['name'], ENT_QUOTES, 'UTF-8') ?>
-                <select
-                    name="option_<?= $index ?>"
-                    data-option-name="<?= htmlspecialchars($option['name'], ENT_QUOTES, 'UTF-8') ?>"
-                    required>
-                    <option value="">선택해 주세요</option>
-                    <?php foreach ($option['values'] as $value): ?>
-                        <option value="<?= htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') ?>">
-                            <?= htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8') ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </label>
-        <?php endforeach; ?>
-
-        <?php if (!$product['options']): ?>
-            <label>
-                옵션 직접 입력
-                <input
-                    name="manual_option"
-                    data-option-name="직접 입력 옵션"
-                    placeholder="색상, 크기 등 원하는 옵션">
-            </label>
-        <?php endif; ?>
+        <?php require __DIR__ . '/product-options.php'; ?>
 
         <label>
             수량

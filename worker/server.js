@@ -87,6 +87,8 @@ async function analyze(rawUrl) {
       };
     }
     if (!response || response.status() >= 400) throw new Error(`상품 페이지 응답 오류 (${response?.status() || '응답 없음'})`);
+    // 이동 전에 응답을 읽되, 본문을 읽지 못해도 현재 DOM 분석은 계속한다.
+    const sourceHtml = await response.text().catch(() => null);
     await page.waitForTimeout(1200);
     const result = await page.evaluate(() => {
       const text = (value) => typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
@@ -210,7 +212,7 @@ async function analyze(rawUrl) {
     const content = await page.evaluate(extractProductContent, { product: result.structuredProduct });
     let typedOptions = await page.evaluate(extractProductOptions, {});
     // 외부 스크립트가 옵션을 숨기거나 제거해도 응답 HTML의 명시적 상품 옵션을 보존한다.
-    if (!typedOptions.length) typedOptions = await page.evaluate(extractProductOptions, { html: await response.text() });
+    if (!typedOptions.length && sourceHtml) typedOptions = await page.evaluate(extractProductOptions, { html: sourceHtml });
     if (typedOptions.length) result.optionGroups = typedOptions;
     delete result.structuredProduct;
     const price = parsePrice(result.price);

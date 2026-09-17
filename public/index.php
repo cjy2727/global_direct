@@ -67,7 +67,7 @@ if ($path === '/api/cart/items' && $method === 'POST') {
         $cart = (new CartService())->add(
             (string) ($input['product_id'] ?? ''),
             (int) ($input['quantity'] ?? 1),
-            (array) ($input['selected_options'] ?? []),
+            $input['selected_options'] ?? [],
             (string) ($input['request_note'] ?? '')
         );
         json_response(['ok' => true, 'cart' => $cart], 201);

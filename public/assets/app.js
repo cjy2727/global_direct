@@ -60,7 +60,7 @@ function escapeHtml(value) {
 function selectedOptions(form) {
   const result = {};
   form.querySelectorAll('[data-option-name]').forEach((field) => {
-    if (field.value) result[field.dataset.optionName] = field.value;
+    if (field.value) result[field.dataset.optionId || field.dataset.optionName] = field.value;
   });
   return result;
 }
@@ -154,11 +154,11 @@ async function loadCart() {
     return;
   }
 
-  container.innerHTML = data.items.map((item) => {
+  container.innerHTML = data.items.map((item, index) => {
     const image = item.image_url
       ? `<img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.title)}" referrerpolicy="no-referrer">`
       : '<div></div>';
-    const options = Object.entries(item.selected_options)
+    const options = Object.entries(item.option_labels || item.selected_options)
       .map(([key, value]) => `${key}: ${value}`)
       .join(' / ') || '선택 옵션 없음';
     const note = item.request_note ? ` · 요청사항: ${escapeHtml(item.request_note)}` : '';
@@ -171,10 +171,16 @@ async function loadCart() {
           <p>${escapeHtml(options)}</p>
           <p>수량 ${item.quantity}${note}</p>
         </div>
-        <a class="primary link-button" href="/request?product=${encodeURIComponent(item.public_id)}">구매하기</a>
+        <a class="primary link-button" data-cart-index="${index}" href="/request?product=${encodeURIComponent(item.public_id)}">구매하기</a>
       </article>
     `;
   }).join('');
+  container.querySelectorAll('[data-cart-index]').forEach((link) => {
+    link.addEventListener('click', () => {
+      const item = data.items[Number(link.dataset.cartIndex)];
+      sessionStorage.setItem(`globaldirect:${item.public_id}`, JSON.stringify(item));
+    });
+  });
 }
 
 if (document.querySelector('#cart-list')) loadCart();
@@ -253,7 +259,8 @@ if (requestForm) {
       requestForm.quantity.value = saved.quantity || 1;
       requestForm.request_note.value = saved.request_note || '';
       requestForm.querySelectorAll('[data-option-name]').forEach((field) => {
-        field.value = saved.selected_options?.[field.dataset.optionName] || '';
+        field.value = saved.selected_options?.[field.dataset.optionId || field.dataset.optionName]
+          ?? (field.dataset.optionId?.startsWith('legacy-') ? saved.selected_options?.[field.dataset.optionName] : '') ?? '';
       });
     }
   } catch {

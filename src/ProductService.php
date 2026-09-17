@@ -73,10 +73,7 @@ final class ProductService
         $snapshot = json_decode($product['raw_json'] ?? '{}', true);
         $product['detail_blocks'] = ProductContent::details(is_array($snapshot) ? $snapshot : [], $product['description'] ?? null);
         $product['main_image'] = $product['images'][0] ?? null;
-        $product['options'] = array_map(static fn(array $row): array => [
-            'name' => $row['option_name'],
-            'values' => json_decode($row['values_json'], true) ?: [],
-        ], $options);
+        $product['options'] = ProductOptions::fromRows($options);
         return $product;
     }
 
@@ -104,11 +101,11 @@ final class ProductService
             }
             $db->insertMany('product_images', $images);
             $options = [];
-            foreach (array_slice($data['optionGroups'] ?? [], 0, 8) as $index => $option) {
+            foreach (array_slice($data['optionGroups'] ?? [], 0, 40) as $index => $option) {
                 $options[] = [
                     'product_id' => $productId,
                     'option_name' => $this->limit((string) ($option['name'] ?? '옵션'), 190),
-                    'values_json' => json_encode(array_slice($option['values'] ?? [], 0, 30), JSON_UNESCAPED_UNICODE),
+                    'values_json' => json_encode(isset($option['type']) ? array_merge($option, ['version' => 2]) : array_slice($option['values'] ?? [], 0, 100), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
                     'sort_order' => $index,
                 ];
             }

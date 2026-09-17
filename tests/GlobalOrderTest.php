@@ -60,3 +60,29 @@ verify(str_contains($html, 'name="country_code"'));
 verify(str_contains($html, 'value="DE"'));
 verify(str_contains($html, 'name="quote_currency"'));
 echo "GlobalOrderTest: OK (temporary fixtures and template rendering)\n";
+
+// 옵션 입력은 임시 장바구니와 주문 스냅샷을 거쳐 손실 없이 보존되어야 한다.
+$db->execute('CREATE TEMPORARY TABLE carts (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NULL, session_key VARCHAR(64))');
+$db->execute('CREATE TEMPORARY TABLE cart_items (id INT AUTO_INCREMENT PRIMARY KEY, cart_id INT, product_id INT, quantity INT, selected_options_json JSON, request_note TEXT)');
+$db->insert('carts', ['session_key' => hash('sha256', session_id())]);
+$selected = [];
+for ($i = 0; $i < 9; $i++) {
+    $definition = ['version' => 2, 'id' => 'option-' . $i, 'type' => $i < 4 ? 'text' : 'select', 'required' => true, 'inputType' => 'text', 'priceDelta' => 0,
+        'values' => $i < 4 ? [] : [['id' => 'yes', 'label' => '동의합니다', 'priceDelta' => 0, 'disabled' => false]]];
+    $db->insert('product_options', ['product_id' => 1, 'option_name' => 'Fixture ' . $i, 'values_json' => json_encode($definition), 'sort_order' => $i]);
+    $selected['option-' . $i] = $i < 4 ? str_repeat('가', 100) : 'yes';
+}
+$cart = new \App\CartService($db);
+$cart->add('0123456789abcdef', 3, $selected, 'Fixture note');
+$item = $cart->items()[0];
+verify($item['selected_options'] === $selected && (int) $item['quantity'] === 3);
+$withOptions = $service->createFromProduct($user, $item['public_id'], array_merge($input, ['selected_options' => $item['selected_options'], 'quantity' => $item['quantity'], 'quote_currency' => 'KWD']));
+$stored = $db->fetchOne('SELECT * FROM orders WHERE order_no = :number', ['number' => $withOptions['order_no']]);
+verify(json_decode($stored['commerce_json'], true)['selected_options'] === $selected);
+$product = (new \App\ProductService($db))->find('0123456789abcdef');
+ob_start();
+require dirname(__DIR__) . '/views/request.php';
+$html = ob_get_clean();
+verify(substr_count($html, 'data-option-id=') === 9);
+verify(!str_contains($html, 'value="yes" selected'));
+echo "Options cart/order persistence: OK (9 fields, temporary fixtures)\n";

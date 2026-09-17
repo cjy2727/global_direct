@@ -27,7 +27,21 @@ final class ProductOptions
         return $groups;
     }
 
-    /** 顧客入力を定義と照合し、識別子・表示文言・追加金額をサーバー側で確定する。 */
+    /** 저장된 장바구니를 원본 옵션명과 선택 문구로 표시한다. */
+    public static function displayLabels(array $definitions, array $selected): array
+    {
+        $labels = [];
+        foreach ($selected as $id => $value) {
+            $group = array_values(array_filter($definitions, static fn($item) => $item['id'] === $id))[0] ?? null;
+            $choice = $group ? (array_values(array_filter($group['values'] ?? [], static fn($item) => (string) $item['id'] === (string) $value))[0] ?? null) : null;
+            $name = $group['name'] ?? $id;
+            $labelKey = array_key_exists($name, $labels) ? $name . ' (' . (count($labels) + 1) . ')' : $name;
+            $labels[$labelKey] = $choice['label'] ?? $value;
+        }
+        return $labels;
+    }
+
+    /** 고객 입력을 정의와 대조하고 식별자, 표시 문구, 추가금액을 서버에서 확정한다. */
     public static function validate(array $definitions, mixed $input): array
     {
         if (!is_array($input)) throw new RuntimeException('상품 옵션을 확인해 주세요.');
@@ -41,6 +55,13 @@ final class ProductOptions
                 if (trim($value) !== '') $selected[$key] = $labels[$key] = trim($value);
             }
             return ['selected' => $selected, 'labels' => $labels, 'price_delta' => $selected ? null : 0.0];
+        }
+        // 기존 장바구니의 이름 키는 이름이 유일한 이전 형식에만 호환한다.
+        foreach ($definitions as $group) {
+            if (!str_starts_with($group['id'], 'legacy-') || !array_key_exists($group['name'], $input)) continue;
+            if (count(array_filter($definitions, static fn($item) => $item['name'] === $group['name'])) !== 1) continue;
+            $input[$group['id']] ??= $input[$group['name']];
+            unset($input[$group['name']]);
         }
         $allowed = array_column($definitions, 'id');
         foreach (array_keys($input) as $key) {
@@ -65,7 +86,9 @@ final class ProductOptions
                 throw new RuntimeException('이메일 형식을 확인해 주세요.');
             }
             $selected[$group['id']] = $value;
-            $labels[$group['name'] . ' [' . $group['id'] . ']'] = $label;
+            $labelKey = array_key_exists($group['name'], $labels)
+                ? $group['name'] . ' (' . (count($labels) + 1) . ')' : $group['name'];
+            $labels[$labelKey] = $label;
             if (!is_numeric($extra) || !is_finite((float) $extra)) $priceKnown = false;
             else $delta += (float) $extra;
         }

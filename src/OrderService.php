@@ -29,22 +29,18 @@ final class OrderService
             throw new RuntimeException('요청사항은 1000자 이내로 입력해 주세요.');
         }
 
-        $options = $input['selected_options'] ?? [];
-        if (!is_array($options)) {
-            throw new RuntimeException('상품 옵션을 확인해 주세요.');
-        }
-        foreach ($options as $value) {
-            if (!is_string($value)) throw new RuntimeException('상품 옵션을 확인해 주세요.');
-        }
-
+        $validated = ProductOptions::validate($product['options'], $input['selected_options'] ?? []);
         $optionText = implode(' / ', array_map(
             static fn($key, $value) => $key . ': ' . $value,
-            array_keys($options),
-            array_values($options)
+            array_keys($validated['labels']), array_values($validated['labels'])
         ));
-        if (strlen($optionText) > 500) throw new RuntimeException('상품 옵션 입력이 너무 깁니다.');
+        // 기존 요약 열은 500자까지, 원문 전체와 식별자는 commerce_json에 보존한다.
+        $characters = preg_split('//u', $optionText, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $optionText = implode('', array_slice($characters, 0, 500));
+        $unitPrice = isset($product['price']) && $validated['price_delta'] !== null
+            ? (float) $product['price'] + $validated['price_delta'] : null;
         $quote = GlobalCommerce::quote(
-            isset($product['price']) ? (float) $product['price'] : null,
+            $unitPrice,
             (string) ($product['currency'] ?? ''), $quoteCurrency, $quantity,
             $product['analysis_status'] === 'complete'
         );
@@ -55,6 +51,9 @@ final class OrderService
             'route_status' => 'review_pending',
             'quote' => $quote,
             'request_note' => $requestNote,
+            'selected_options' => $validated['selected'],
+            'option_labels' => $validated['labels'],
+            'option_price_delta' => $validated['price_delta'],
         ];
         $orderNo = 'GD-' . date('ymd') . '-' . strtoupper(bin2hex(random_bytes(3)));
         return $this->db->transaction(function (SimpleMySql $db) use ($user, $product, $orderNo, $commerce, $optionText, $quantity, $address, $input): array {
