@@ -3,7 +3,7 @@ import dns from 'node:dns/promises';
 import net from 'node:net';
 import { chromium } from 'playwright';
 import { extractProductContent } from './product-content.js';
-import { extractProductOptions } from './product-options.js';
+import { collectOptions, waitForOptions, watchOptionResponses } from './option-collector.js';
 
 const PORT = 3000;
 const TOKEN = process.env.WORKER_TOKEN || '';
@@ -54,6 +54,7 @@ async function analyze(rawUrl) {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ locale: 'ko-KR', userAgent: 'GlobalDirectProductReader/1.0' });
   const page = await context.newPage();
+  const optionResponses = watchOptionResponses(page, rawUrl);
   page.setDefaultTimeout(8000);
   await page.route('**/*', async (route) => {
     try {
@@ -89,7 +90,7 @@ async function analyze(rawUrl) {
     if (!response || response.status() >= 400) throw new Error(`상품 페이지 응답 오류 (${response?.status() || '응답 없음'})`);
     // 이동 전에 응답을 읽되, 본문을 읽지 못해도 현재 DOM 분석은 계속한다.
     const sourceHtml = await response.text().catch(() => null);
-    await page.waitForTimeout(1200);
+    await waitForOptions(page);
     const result = await page.evaluate(() => {
       const text = (value) => typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
       const products = [];
@@ -99,7 +100,7 @@ async function analyze(rawUrl) {
           const visit = (item) => {
             if (!item || typeof item !== 'object') return;
             if (Array.isArray(item)) return item.forEach(visit);
-            if (item['@type'] === 'Product' || (Array.isArray(item['@type']) && item['@type'].includes('Product'))) products.push(item);
+            if (['Product', 'ProductGroup'].includes(item['@type']) || (Array.isArray(item['@type']) && item['@type'].some((type) => ['Product', 'ProductGroup'].includes(type)))) products.push(item);
             if (item['@graph']) visit(item['@graph']);
             if (item.mainEntity) visit(item.mainEntity);
           };
@@ -150,75 +151,26 @@ async function analyze(rawUrl) {
         else if (/₩|원|KRW/.test(bodyText)) currency = 'KRW';
         else currency = /US\$|USD|\$\s*[0-9]/i.test(bodyText) ? 'USD' : 'UNKNOWN';
       }
-      const optionGroups = [];
-      const addGroup = (name, values) => {
-        const rawName = text(typeof name === 'object' ? (name.target || name.origin) : name);
-        const cleanName = isRakuten && /^radioGroup-/i.test(rawName) ? '구매 방식' : (rawName || '옵션');
-        const cleanValues = [...new Set((values || []).map((value) => {
-          const rawValue = text(typeof value === 'object' ? (value.name?.target || value.name?.origin || value.label || value.title || value.value) : value);
-          if (!isRakuten) return rawValue;
-          if (rawValue.toLowerCase() === 'normal') return '일반 구매';
-          if (rawValue.toLowerCase() === 'subscription') return '정기 구매';
-          return rawValue;
-        }).filter(Boolean))].slice(0, 30);
-        if (!cleanValues.length || cleanValues.every((value) => /^(?:🇯🇵|🇰🇷|한국어|일본어|한국|일본|ko|ja)$/i.test(value))) return;
-        const alreadyAdded = optionGroups.some((group) => (
-          group.name === cleanName
-          && JSON.stringify(group.values) === JSON.stringify(cleanValues)
-        ));
-        if (!alreadyAdded) {
-          optionGroups.push({ name: cleanName, values: cleanValues });
-        }
-      };
-      for (const select of document.querySelectorAll('select')) {
-        const options = [...select.options].map((o) => text(o.textContent)).filter((v) => v && !/선택|select|choose/i.test(v)).slice(0, 30);
-        const name = text(select.labels?.[0]?.textContent) || text(select.getAttribute('aria-label')) || text(select.name);
-        if (name) addGroup(name, options);
-      }
-      const radioGroups = new Map();
-      for (const radio of document.querySelectorAll('input[type="radio"]')) {
-        const name = radio.name || '옵션';
-        const label = text(radio.labels?.[0]?.textContent) || text(radio.value);
-        if (label) radioGroups.set(name, [...(radioGroups.get(name) || []), label]);
-      }
-      for (const [name, values] of radioGroups) addGroup(name, values);
-      const visitState = (item, seen = new Set()) => {
-        if (!item || typeof item !== 'object' || seen.has(item) || seen.size > 15000) return;
-        seen.add(item);
-        if (!Array.isArray(item) && Array.isArray(item.values)) addGroup(item.groupName || item.name || item.label, item.values);
-        if (Array.isArray(item)) item.forEach((value) => visitState(value, seen));
-        else Object.values(item).forEach((value) => visitState(value, seen));
-      };
-      for (const entry of (window.__next_f || [])) {
-        const chunk = entry?.[1];
-        if (typeof chunk !== 'string' || !/option|variant/i.test(chunk)) continue;
-        for (const line of chunk.split('\n')) {
-          const separator = line.indexOf(':');
-          if (separator < 1) continue;
-          try { visitState(JSON.parse(line.slice(separator + 1))); } catch {}
-        }
-      }
       return {
         title,
         price,
         currency,
         structuredProduct: product,
-        optionGroups: optionGroups.slice(0, 8),
         description: text(product.description) || text(meta('meta[property="og:description"]')),
         canonicalUrl: document.querySelector('link[rel="canonical"]')?.href || location.href,
         availability: text(offer.availability),
       };
     });
     const content = await page.evaluate(extractProductContent, { product: result.structuredProduct });
-    let typedOptions = await page.evaluate(extractProductOptions, {});
-    // 외부 스크립트가 옵션을 숨기거나 제거해도 응답 HTML의 명시적 상품 옵션을 보존한다.
-    if (!typedOptions.length && sourceHtml) typedOptions = await page.evaluate(extractProductOptions, { html: sourceHtml });
-    if (typedOptions.length) result.optionGroups = typedOptions;
     delete result.structuredProduct;
     const price = parsePrice(result.price);
     const currency = String(result.currency || 'UNKNOWN').trim().toUpperCase();
-    return { ...result, ...content, price, currency, sourceUrl: rawUrl, finalUrl: page.url(), status: result.title && price ? 'complete' : 'needs_review' };
+    const options = await collectOptions(page, { sourceHtml, responses: optionResponses, identity: { url: page.url(), title: result.title, price, currency } });
+    return { ...result, ...content, optionGroups: options.groups, optionAnalysis: options.analysis,
+      price, currency, sourceUrl: rawUrl, finalUrl: page.url(),
+      status: result.title && price && ['complete', 'none'].includes(options.analysis.status) ? 'complete' : 'needs_review' };
   } finally {
+    await optionResponses.finish();
     await context.close();
     await browser.close();
   }

@@ -51,6 +51,8 @@ services:
       - ./worker/server.js:/app/server.js:ro
       - ./worker/product-content.js:/app/product-content.js:ro
       - ./worker/product-options.js:/app/product-options.js:ro
+      - ./worker/option-sources.js:/app/option-sources.js:ro
+      - ./worker/option-collector.js:/app/option-collector.js:ro
       - ./worker/tests:/app/tests:ro
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]

@@ -49,6 +49,8 @@ final class ProductOptions
         $labels = [];
         $delta = 0.0;
         $priceKnown = true;
+        $combination = self::selectedCombination($definitions, $input);
+        $linkedIds = $combination['ids'] ?? [];
         if (!$definitions) {
             foreach ($input as $key => $value) {
                 if ($key !== '직접 입력 옵션' || !is_string($value) || strlen($value) > 2000) throw new RuntimeException('상품 옵션을 확인해 주세요.');
@@ -89,9 +91,39 @@ final class ProductOptions
             $labelKey = array_key_exists($group['name'], $labels)
                 ? $group['name'] . ' (' . (count($labels) + 1) . ')' : $group['name'];
             $labels[$labelKey] = $label;
+            if (!in_array($group['id'], $linkedIds, true)) {
+                if (!is_numeric($extra) || !is_finite((float) $extra)) $priceKnown = false;
+                else $delta += (float) $extra;
+            }
+        }
+        if ($combination !== null) {
+            $extra = $combination['row']['priceDelta'] ?? null;
             if (!is_numeric($extra) || !is_finite((float) $extra)) $priceKnown = false;
             else $delta += (float) $extra;
         }
         return ['selected' => $selected, 'labels' => $labels, 'price_delta' => $priceKnown ? $delta : null];
+    }
+
+    /** 수집된 유효 조합으로 서버에서도 교차 검증하며 조합 가격은 한 번만 합산한다. */
+    private static function selectedCombination(array $definitions, array $input): ?array
+    {
+        foreach ($definitions as $group) {
+            if (empty($group['combinationGroupIds']) || empty($group['combinations'])) continue;
+            $ids = $group['combinationGroupIds'];
+            foreach ($group['combinations'] as $row) {
+                if (!empty($row['disabled'])) continue;
+                $matches = true;
+                foreach ($ids as $id) {
+                    if (!isset($input[$id], $row['values'][$id]) || !is_string($input[$id])
+                        || trim($input[$id]) !== (string) $row['values'][$id]) {
+                        $matches = false;
+                        break;
+                    }
+                }
+                if ($matches) return ['ids' => $ids, 'row' => $row];
+            }
+            throw new RuntimeException('선택한 옵션 조합은 구매 가능 여부가 확인되지 않았습니다. 옵션을 다시 선택해 주세요.');
+        }
+        return null;
     }
 }

@@ -65,6 +65,34 @@ function selectedOptions(form) {
   return result;
 }
 
+// 선행 옵션에 맞는 확인된 조합만 노출한다. 네이티브 select와 서버 검증을 함께 유지한다.
+function syncOptionCombinations(form) {
+  for (const script of form.querySelectorAll('[data-option-combinations]')) {
+    let matrix;
+    try { matrix = JSON.parse(script.textContent); } catch { continue; }
+    const selected = {};
+    for (const id of matrix.ids) {
+      const field = [...form.querySelectorAll('select[data-option-id]')].find((item) => item.dataset.optionId === id);
+      if (!field) continue;
+      for (const option of field.options) {
+        if (!option.value) continue;
+        option.disabled = option.dataset.sourceDisabled === '1' || !matrix.rows.some((row) => !row.disabled
+          && row.values[id] === option.value && Object.entries(selected).every(([key, value]) => row.values[key] === value));
+      }
+      if (field.selectedOptions[0]?.disabled) field.value = '';
+      if (field.value) selected[id] = field.value;
+      field.__mtSync?.();
+    }
+  }
+}
+document.querySelectorAll('form').forEach((form) => {
+  if (!form.querySelector('[data-option-combinations]')) return;
+  form.addEventListener('change', (event) => {
+    if (event.target.matches('[data-option-id]')) syncOptionCombinations(form);
+  });
+  syncOptionCombinations(form);
+});
+
 const analyzeForm = document.querySelector('#analyze-form');
 if (analyzeForm) {
   analyzeForm.addEventListener('submit', async (event) => {
@@ -266,6 +294,7 @@ if (requestForm) {
   } catch {
     // Ignore invalid session storage and keep the form defaults.
   }
+  syncOptionCombinations(requestForm);
 
   requestForm.addEventListener('submit', async (event) => {
     event.preventDefault();

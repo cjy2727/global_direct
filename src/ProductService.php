@@ -30,7 +30,7 @@ final class ProductService
         $context = stream_context_create([
             'http' => [
                 'method' => 'POST',
-                'timeout' => 35,
+                'timeout' => 55,
                 'ignore_errors' => true,
                 'header' => "Content-Type: application/json\r\n"
                     . 'X-Worker-Token: ' . env_value('WORKER_TOKEN') . "\r\n",
@@ -71,6 +71,7 @@ final class ProductService
         );
         $product['images'] = array_values(array_filter(array_column($images, 'image_url'), static fn($url) => ProductContent::imageUrl($url) !== null));
         $snapshot = json_decode($product['raw_json'] ?? '{}', true);
+        $product['option_analysis'] = is_array($snapshot) ? ($snapshot['optionAnalysis'] ?? null) : null;
         $product['detail_blocks'] = ProductContent::details(is_array($snapshot) ? $snapshot : [], $product['description'] ?? null);
         $product['main_image'] = $product['images'][0] ?? null;
         $product['options'] = ProductOptions::fromRows($options);
