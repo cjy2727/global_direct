@@ -122,6 +122,22 @@ if (analyzeForm) {
       button.innerHTML = '상품 정보 가져오기 <span>→</span>';
     }
   });
+
+  // 외부 검색 화면에서 전달한 URL로 기존 상품 분석을 시작한다.
+  const incomingUrl = new URLSearchParams(window.location.search).get('url');
+
+  if (incomingUrl) {
+    try {
+      const productUrl = new URL(incomingUrl);
+
+      if (['http:', 'https:'].includes(productUrl.protocol)) {
+        analyzeForm.elements.namedItem('url').value = incomingUrl;
+        analyzeForm.requestSubmit();
+      }
+    } catch {
+      // 올바르지 않은 URL은 자동 분석하지 않고 입력 화면을 유지한다.
+    }
+  }
 }
 
 document.querySelectorAll('.thumbnail').forEach((button) => {
