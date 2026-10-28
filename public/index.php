@@ -1,16 +1,32 @@
 <?php
-
 declare(strict_types=1);
 require dirname(__DIR__) . '/src/bootstrap.php';
 
-use App\Auth;
-use App\CartService;
-use App\OrderService;
 use App\ProductService;
 
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
+// Allow browser requests only from the approved HTTPS storefront origins.
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+$allowedOrigin = preg_match(
+    '~^https://(?:(?:post|m2)\.[a-z0-9-]+\.shiptao\.kr|(?:post|m2)\.malltail\.com)$~i',
+    $origin
+) === 1;
+
+header('Vary: Origin', false);
+if ($allowedOrigin) {
+    header('Access-Control-Allow-Origin: ' . $origin);
+    header('Access-Control-Allow-Methods: POST, OPTIONS');
+    header('Access-Control-Allow-Headers: Content-Type');
+}
+
+if ($method === 'OPTIONS') {
+    http_response_code($allowedOrigin ? 204 : 403);
+    exit;
+}
+
+/** Send a JSON API response and finish the request. */
 function json_response(array $payload, int $status = 200): never
 {
     http_response_code($status);
@@ -20,137 +36,26 @@ function json_response(array $payload, int $status = 200): never
     exit;
 }
 
-function request_json(): array
-{
-    $data = json_decode((string) file_get_contents('php://input'), true);
-    return is_array($data) ? $data : [];
-}
-
-function render(string $view, array $data = []): never
-{
-    extract($data, EXTR_SKIP);
-    require dirname(__DIR__) . '/views/layout.php';
-    exit;
-}
-
-if ($path === '/health') {
+if ($path === '/health' && $method === 'GET') {
     json_response(['ok' => true, 'service' => 'globaldirect']);
 }
-
-if ($path === '/api/products/analyze' && $method === 'POST') {
-    $input = request_json();
+if ($path === '/api/products/analyze') {
+    if ($method !== 'POST') {
+        header('Allow: POST, OPTIONS');
+        json_response(['ok' => false, 'message' => 'POST 요청만 지원합니다.'], 405);
+    }
     try {
-        $product = (new ProductService())->analyze((string) ($input['url'] ?? ''));
-        json_response([
-            'ok' => true,
-            'product' => [
-                'id' => $product['public_id'],
-                'url' => '/products/' . $product['public_id'],
-            ],
-        ], 201);
+        $input = json_decode((string) file_get_contents('php://input'), true, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException) {
+        json_response(['ok' => false, 'message' => '올바른 JSON 본문을 보내 주세요.'], 400);
+    }
+    if (!is_array($input) || !is_string($input['url'] ?? null)) {
+        json_response(['ok' => false, 'message' => 'url 문자열이 필요합니다.'], 400);
+    }
+    try {
+        json_response(['ok' => true, 'product' => (new ProductService())->analyze($input['url'])]);
     } catch (RuntimeException $exception) {
         json_response(['ok' => false, 'message' => $exception->getMessage()], 422);
     }
 }
-
-if (preg_match('#^/api/products/([a-f0-9]{16})$#', $path, $matches) && $method === 'GET') {
-    try {
-        json_response(['ok' => true, 'product' => (new ProductService())->find($matches[1])]);
-    } catch (RuntimeException $exception) {
-        json_response(['ok' => false, 'message' => $exception->getMessage()], 404);
-    }
-}
-
-if ($path === '/api/cart/items' && $method === 'POST') {
-    $input = request_json();
-    try {
-        $cart = (new CartService())->add(
-            (string) ($input['product_id'] ?? ''),
-            (int) ($input['quantity'] ?? 1),
-            $input['selected_options'] ?? [],
-            (string) ($input['request_note'] ?? '')
-        );
-        json_response(['ok' => true, 'cart' => $cart], 201);
-    } catch (RuntimeException $exception) {
-        json_response(['ok' => false, 'message' => $exception->getMessage()], 422);
-    }
-}
-
-if ($path === '/api/cart' && $method === 'GET') {
-    json_response(['ok' => true, 'items' => (new CartService())->items()]);
-}
-
-if ($path === '/api/register' && $method === 'POST') {
-    $input = request_json();
-    try {
-        $user = (new Auth())->register(
-            (string) ($input['email'] ?? ''),
-            (string) ($input['password'] ?? ''),
-            (string) ($input['name'] ?? '')
-        );
-        json_response(['ok' => true, 'user' => $user], 201);
-    } catch (RuntimeException $exception) {
-        json_response(['ok' => false, 'message' => $exception->getMessage()], 422);
-    }
-}
-
-if ($path === '/api/login' && $method === 'POST') {
-    $input = request_json();
-    try {
-        $user = (new Auth())->login(
-            (string) ($input['email'] ?? ''),
-            (string) ($input['password'] ?? '')
-        );
-        json_response(['ok' => true, 'user' => $user]);
-    } catch (RuntimeException $exception) {
-        json_response(['ok' => false, 'message' => $exception->getMessage()], 401);
-    }
-}
-
-if ($path === '/api/logout' && $method === 'POST') {
-    Auth::logout();
-    json_response(['ok' => true]);
-}
-if ($path === '/api/session' && $method === 'GET') json_response(['ok' => true, 'user' => Auth::user()]);
-
-if ($path === '/api/orders' && $method === 'POST') {
-    $user = Auth::user();
-    if ($user === null) json_response(['ok' => false, 'message' => '로그인이 필요합니다.'], 401);
-    $input = request_json();
-    try {
-        json_response(['ok' => true, 'order' => (new OrderService())->createFromProduct($user, (string)($input['product_id'] ?? ''), $input)], 201);
-    } catch (RuntimeException $exception) {
-        json_response(['ok' => false, 'message' => $exception->getMessage()], 422);
-    }
-}
-
-if ($path === '/api/orders/mine' && $method === 'GET') {
-    $user = Auth::user();
-    if ($user === null) json_response(['ok' => false, 'message' => '로그인이 필요합니다.'], 401);
-    json_response(['ok' => true, 'orders' => (new OrderService())->mine((int) $user['id'])]);
-}
-
-if ($path === '/account') render('account', ['title' => '내 계정']);
-if (preg_match('#^/products/([a-f0-9]{16})$#', $path, $matches)) {
-    try {
-        render('product', ['title' => '상품 상세', 'product' => (new ProductService())->find($matches[1])]);
-    } catch (RuntimeException) {
-        http_response_code(404);
-        render('not-found', ['title' => '상품을 찾을 수 없습니다']);
-    }
-}
-if ($path === '/request') {
-    $productId = (string)($_GET['product'] ?? '');
-    try {
-        render('request', ['title' => '구매대행 신청', 'product' => (new ProductService())->find($productId)]);
-    } catch (RuntimeException) {
-        http_response_code(404);
-        render('not-found', ['title' => '상품을 찾을 수 없습니다']);
-    }
-}
-if ($path === '/cart') render('cart', ['title' => '장바구니']);
-if ($path === '/orders') render('orders', ['title' => '주문 조회']);
-if ($path === '/') render('home', ['title' => '전 세계 쇼핑을 더 가깝게']);
-
-http_response_code(404);
-render('not-found', ['title' => '페이지를 찾을 수 없습니다']);
+json_response(['ok' => false, 'message' => '경로를 찾을 수 없습니다.'], 404);

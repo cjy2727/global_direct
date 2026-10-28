@@ -10,37 +10,23 @@ services:
       - php
 
   php:
+    image: globaldirect-php:latest
     build:
       context: .
       dockerfile: php/Dockerfile
     environment:
-      APP_ENV: "${APP_ENV}"
-      APP_DEBUG: "${APP_DEBUG}"
-      KRW_PER_JPY: "${KRW_PER_JPY}"
-      USD_JPY_RATE: "${USD_JPY_RATE}"
-      DB_HOST: "${DB_HOST}"
-      DB_PORT: "${DB_PORT}"
-      DB_NAME: "${DB_NAME}"
-      DB_USER: "${DB_USER}"
-      DB_PASSWORD: "${DB_PASSWORD}"
-      REDIS_HOST: "${REDIS_HOST}"
-      REDIS_PORT: "${REDIS_PORT}"
       PRODUCT_WORKER_URL: "${PRODUCT_WORKER_URL}"
       WORKER_TOKEN: "${WORKER_TOKEN}"
     volumes:
       - ./public:/var/www/html/public:ro
       - ./src:/var/www/html/src:ro
-      - ./views:/var/www/html/views:ro
       - ./tests:/var/www/html/tests:ro
     depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
       playwright:
         condition: service_healthy
 
   playwright:
+    image: globaldirect-playwright:latest
     build:
       context: ./worker
     init: true
@@ -59,38 +45,3 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-
-  mysql:
-    image: mysql:8.4
-    environment:
-      MYSQL_DATABASE: "${MYSQL_DATABASE}"
-      MYSQL_USER: "${MYSQL_USER}"
-      MYSQL_PASSWORD: "${MYSQL_PASSWORD}"
-      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
-    volumes:
-      - mysql_data:/var/lib/mysql
-      - ./database/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
-      - ./database/002_commerce.sql:/docker-entrypoint-initdb.d/002-commerce.sql:ro
-      - ./database/003_remove_payment_admin.sql:/docker-entrypoint-initdb.d/003-remove-payment-admin.sql:ro
-      - ./database/004_products_cart.sql:/docker-entrypoint-initdb.d/004-products-cart.sql:ro
-      - ./database/005_global_orders.sql:/docker-entrypoint-initdb.d/005-global-orders.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-  redis:
-    image: redis:7.4-alpine
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-volumes:
-  mysql_data:
-  redis_data:

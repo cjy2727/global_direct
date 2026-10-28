@@ -44,8 +44,6 @@ docker compose build php playwright || exit /b 1
 
 echo [3/6] Pull runtime images...
 docker pull nginx:1.27-alpine || exit /b 1
-docker pull mysql:8.4 || exit /b 1
-docker pull redis:7.4-alpine || exit /b 1
 
 echo [4/6] Add version tags...
 docker tag globaldirect-php:latest "globaldirect-php:%GLOBALDIRECT_VERSION%" || exit /b 1
@@ -57,9 +55,7 @@ docker image inspect ^
   "globaldirect-php:%GLOBALDIRECT_VERSION%" ^
   globaldirect-playwright:latest ^
   "globaldirect-playwright:%GLOBALDIRECT_VERSION%" ^
-  nginx:1.27-alpine ^
-  mysql:8.4 ^
-  redis:7.4-alpine >nul || exit /b 1
+  nginx:1.27-alpine >nul || exit /b 1
 
 echo [6/6] Export images to %OUTPUT%...
 docker save -o "%OUTPUT%" ^
@@ -67,9 +63,7 @@ docker save -o "%OUTPUT%" ^
   "globaldirect-php:%GLOBALDIRECT_VERSION%" ^
   globaldirect-playwright:latest ^
   "globaldirect-playwright:%GLOBALDIRECT_VERSION%" ^
-  nginx:1.27-alpine ^
-  mysql:8.4 ^
-  redis:7.4-alpine || exit /b 1
+  nginx:1.27-alpine || exit /b 1
 
 echo.
 echo DONE: %OUTPUT%

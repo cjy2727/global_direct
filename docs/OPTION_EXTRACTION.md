@@ -15,35 +15,22 @@ URL 분석 시 `worker/option-collector.js`가 다음 근거를 통합한다.
 
 이 제약 때문에 POST로만 하위 옵션을 조회하는 상점, 특수 버튼 연동, iframe/닫힌 Shadow DOM, 인증·자동화 차단, 긴 지연 로딩은 완전히 수집하지 못할 수 있다. WooCommerce의 빈 속성(모든 값에 대응하는 변형)과 500개를 넘는 구조화 조합은 추측해서 확장하지 않는다.
 
-## 결과와 기존 데이터 호환
+## API 결과
 
-`products.raw_json.optionAnalysis`에 다음 상태를 저장한다.
+product.optionAnalysis 상태:
+- complete: 지원 구조화 데이터로 옵션 조합과 재고 확인
+- none: 사용자 선택 옵션이 없음을 확인
+- partial: 전체 옵션/관계/재고 확인에 한계
+- unresolved: 옵션 유무를 확인하지 못함
 
-| 상태 | 의미 |
-| --- | --- |
-| complete | 지원하는 구조화 데이터로 옵션 조합과 재고 상태를 확인했고, 추가 선택 그룹이 남지 않음 |
-| none | Shopify 단일 Default Title 변형으로 사용자 선택 옵션이 없음을 확인 |
-| partial | 옵션은 있으나 전체 범위·관계·재고 확인에 한계가 있음 |
-| unresolved | 옵션이 없는 것인지 수집하지 못한 것인지 확인할 수 없음 |
-
-DOM만 읽은 결과는 전체 옵션의 존재 여부를 증명할 수 없으므로 보수적으로 partial로 둔다. partial/unresolved는 상품 분석 상태도 needs_review로 처리하고 상세/신청서에 안내한다. complete도 모든 상점의 정확성을 보장하는 판정은 아니다.
-
-기존 v2 옵션 JSON에 `combinationGroupIds`, `combinations`, `combinationsComplete`를 추가한다. 조합표가 있으면 상세/신청서에서 선행 선택에 맞는 값만 활성화하고 서버에서도 조합과 품절을 재검증한다. 조합 추가금액은 한 번만 합산하며 알 수 없는 금액은 null로 유지한다. 구형 옵션 배열과 기존 입력형 옵션은 계속 지원한다.
-
-DB 스키마와 기존 상품/주문을 변경하지 않는다. 기존에 분석해 저장한 상품에는 소급 적용되지 않으므로 같은 원본 URL을 다시 분석해야 새 결과를 확인할 수 있다.
+partial/unresolved는 상품 상태도 needs_review로 반환합니다.
+product.optionGroups에 combinationGroupIds, combinations,
+combinationsComplete 등 수집된 정보를 그대로 반환합니다.
+결과는 저장하지 않으며 화면 표시와 이후 선택 검증은 호출 측에서 담당합니다.
 
 ## 검증
 
-실제 주문/결제 없이 로컬 fixture와 연결 전용 MySQL 임시 테이블을 사용한다.
+    docker compose exec -T playwright node tests/product-options.test.js
+    docker compose exec -T playwright node tests/option-collection.test.js
 
-```powershell
-docker compose exec -T playwright node tests/product-options.test.js
-docker compose exec -T playwright node tests/option-collection.test.js
-docker compose exec -T php php tests/ProductOptionsTest.php
-docker compose exec -T php php tests/ProductOptionCombinationsTest.php
-docker compose exec -T php php tests/ProductOptionStorageTest.php
-docker compose exec -T php php tests/ProductOptionCombinationsTest.php --render | docker compose exec -T playwright node tests/option-combinations-ui.test.js
-docker compose exec -T php php tests/ProductOptionsFlowTestPage.php | docker compose exec -T playwright node tests/option-flow.test.js
-```
-
-Shopify storefront 가격 단위 참고: https://shopify.dev/docs/api/liquid/objects/product#product-price
+로컬 fixture 검증이며 모든 실제 상점의 정확성을 보장하지 않습니다.
