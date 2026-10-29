@@ -8,6 +8,26 @@
     docker compose up --build -d
     docker compose ps
 
+### Codespaces에서 실행
+
+    bash scripts/start-codespaces.sh
+
+컨테이너를 시작하고 PHP 컨테이너의 현재 Docker 브리지를 자동으로 조회합니다.
+Codespaces에서 확인된 legacy 방화벽 차단을 해결하기 위해 해당 브리지의
+발신 통신과 응답 통신 허용 규칙을 `DOCKER-USER`에 추가합니다.
+기존 규칙은 확인 후 건너뛰므로 반복 실행해도 중복 추가하지 않습니다.
+방화벽 변경에는 `sudo` 권한이 필요하며, 기존 규칙이나 데이터는 삭제하지 않습니다.
+기존 브리지의 오래된 규칙도 자동 삭제하지 않습니다.
+
+워커가 준비되면 워커 내부에서 applemusic.co.kr DNS 조회를 확인합니다.
+상품 분석 성공 여부는 별도로 API 요청으로 확인해야 합니다.
+실패하면 원인을 출력하고 종료하며, 컨테이너와 이미 추가된 규칙은 유지합니다.
+이 스크립트는 Linux Codespaces용이며 `iptables-legacy`와 `DOCKER-USER` 체인이
+있어야 합니다. 도구 설치나 전체 방화벽 정책 변경은 수행하지 않습니다.
+
+Codespaces 재시작 또는 네트워크 재생성 후에도 위 명령으로 시작하세요.
+일반 `docker compose up`에는 이 처리가 자동 적용되지 않습니다.
+
 기존 설치 전환 시 --remove-orphans 옵션으로 이전 MySQL/Redis 컨테이너를 제거합니다.
 기존 데이터 볼륨은 삭제하지 않습니다. .env는 보존합니다.
 필요한 환경 변수: APP_PORT, PRODUCT_WORKER_URL, WORKER_TOKEN.
