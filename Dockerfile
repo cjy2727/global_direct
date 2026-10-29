@@ -48,7 +48,8 @@ COPY nginx/default.conf /etc/nginx/conf.d/default.conf
 WORKDIR /app
 
 COPY worker/package*.json ./
-RUN npm ci --omit=dev
+RUN npm install --omit=dev --no-audit --no-fund
+
 
 # Playwright 코드
 COPY worker/ ./
