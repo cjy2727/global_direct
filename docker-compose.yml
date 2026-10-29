@@ -16,18 +16,18 @@ services:
     ports:
       - "8088:80"
     environment:
-      PRODUCT_WORKER_URL: "${PRODUCT_WORKER_URL}"
+      PRODUCT_WORKER_URL: "http://127.0.0.1:3000"
       WORKER_TOKEN: "${WORKER_TOKEN}"
     volumes:
       - ./public:/var/www/html/public:ro
       - ./src:/var/www/html/src:ro
       - ./tests:/var/www/html/tests:ro
-    depends_on:
-      playwright:
-        condition: service_healthy
 
   playwright:
     image: globaldirect-playwright:latest
+    network_mode: "service:php"
+    depends_on:
+      - php
     build:
       context: ./worker
     init: true
