@@ -83,6 +83,56 @@ try {
   const limited = await exploreSelectOptions(page, await page.evaluate(extractProductOptions, {}), { limit: 1 });
   assert.equal(limited.complete, false);
 
+  // Shared names must resolve by opt_id and retain only valid dependent combinations.
+  await page.setContent(`<form name="form1">
+    <select name="optionlist[]" opt_id="2" opt_mix="Y" label="Color" require="Y"><option value="">Select</option><option value="0">Black</option><option value="1">White</option></select>
+    <select name="optionlist[]" opt_id="3" opt_mix="Y" label="Size" require="Y"><option value="">Select</option></select>
+    <select name="optionlist[]" opt_id="4" opt_mix="Y" label="Gender" require="Y"><option value="">Select</option></select></form>`);
+  await page.evaluate(() => {
+    const [color, size, gender] = document.querySelectorAll('select');
+    color.onchange = () => {
+      size.innerHTML = '<option value="">Select</option>' + (color.value === '0' ? '<option value="s">S</option>' : color.value === '1' ? '<option value="l">L</option>' : '');
+      gender.innerHTML = '<option value="">Select</option>';
+    };
+    size.onchange = () => { gender.innerHTML = '<option value="">Select</option>' + (size.value ? '<option value="u">Unisex</option><option value="x" disabled>Sold out</option>' : ''); };
+  });
+  const matrix = await exploreSelectOptions(page, await page.evaluate(extractProductOptions, {}), { budget: 15000 });
+  assert.equal(matrix.explored, true);
+  assert.equal(matrix.complete, true);
+  assert.equal(matrix.groups[0].sourceOptionId, '2');
+  assert.ok(matrix.groups.every(group => group.isCombination === true));
+  assert.equal(matrix.groups[2].values.find(choice => choice.id === 'x').disabled, true);
+  assert.equal(mixed[0].isCombination, false);
+  assert.deepEqual(matrix.groups[0].combinations.map(row => row.values), [
+    { 'option-2': '0', 'option-3': 's', 'option-4': 'u' },
+    { 'option-2': '1', 'option-3': 'l', 'option-4': 'u' },
+  ]);
+  assert.deepEqual(await page.locator('select').evaluateAll(elements => elements.map(element => element.value)), ['', '', '']);
+
+  // Empty independent MakeShop selects are backed by product-scoped page state.
+  await page.goto('https://fixture.test/shop/shopdetail.html?branduid=123');
+  await page.setContent(`<form name="form1">
+    <input name="optionlist[]" opt_id="10" label="Name" type="text" value="PRIVATE" require="Y">
+    <select name="optionlist[]" opt_id="11" opt_mix="N" label="Consent"><option value="">Select</option></select>
+    <select name="optionlist[]" opt_id="12" opt_mix="N" label="Other"><option value="">Select</option></select>
+    <select name="optionlist[]" opt_id="13" opt_mix="N" label="Existing"><option value="live">Live</option></select></form>`);
+  await page.evaluate(() => {
+    const row = { uid: '123', opt_id: '11', opt_type: 'SELECT', opt_mix: 'N', opt_use: 'Y', opt_value: 'Agree', opt_price: '0' };
+    window.optionJsonData = { basic: {
+      0: { 0: row, 1: { ...row, opt_value: 'Confirm' }, 2: { ...row, opt_use: 'N', opt_value: 'Unused' } },
+      1: { 0: { ...row, uid: '999', opt_id: '12' } },
+      2: { 0: { ...row, opt_id: '13', opt_value: 'Stale' } },
+    } };
+  });
+  const makeshop = await page.evaluate(extractProductOptions, {});
+  assert.equal(makeshop[0].type, 'text');
+  assert.ok(!JSON.stringify(makeshop).includes('PRIVATE'));
+  assert.deepEqual(makeshop[1].values.map(value => value.label), ['Agree', 'Confirm']);
+  assert.equal(makeshop[1].values[0].id, '0');
+  assert.equal(makeshop[2].values.length, 0);
+  assert.equal(makeshop[3].values[0].label, 'Live');
+  await page.goto(identity.url);
+
   await page.setContent(`<script type="application/json">${JSON.stringify(shopify)}</script>`);
   const complete = await collectOptions(page, { sourceHtml: '', identity, responses: { payloads: [], finish: async () => {} } });
   assert.equal(complete.analysis.status, 'complete');
@@ -90,6 +140,23 @@ try {
   await page.setContent('<h1>Empty fixture</h1>');
   const empty = await collectOptions(page, { sourceHtml: '', identity, responses: { payloads: [], finish: async () => {} } });
   assert.equal(empty.analysis.status, 'unresolved');
+  await page.route('https://brand.naver.com/**', route => route.fulfill({ contentType: 'text/html', body: '<main></main>' }));
+  await page.goto('https://brand.naver.com/store/products/123');
+  await page.setContent(`<div><a aria-haspopup="listbox" aria-expanded="false" data-shp-area="pcs.optselect" data-shp-contents-type="Pack">Pack</a><ul role="listbox"><li><a role="option" data-shp-area="pcs.optselect" data-shp-contents-type="Pack" data-shp-contents-id="1kg">1kg</a></li></ul></div>
+    <div><a href="#" aria-haspopup="listbox" aria-expanded="false" data-shp-area="pcs.addedoptselect" data-shp-contents-type="Extras">Extras</a></div>`);
+  await page.evaluate(() => {
+    document.querySelector('[data-shp-area="pcs.addedoptselect"]').onclick = function(event) {
+      event.preventDefault(); this.setAttribute('aria-expanded', 'true');
+      this.parentElement.insertAdjacentHTML('beforeend', '<a role="option" data-shp-area="pcs.addedoptselect" data-shp-contents-type="Extras" data-shp-contents-id="Cheese">Cheese (+4,900\uC6D0)</a>');
+    };
+  });
+  const naver = await collectOptions(page, { sourceHtml: '', identity: { ...identity, url: page.url() }, responses: { payloads: [], finish: async () => {} } });
+  assert.equal(naver.groups.length, 2);
+  assert.equal(naver.groups[0].required, true);
+  assert.equal(naver.groups[1].required, false);
+  assert.equal(naver.groups[1].values[0].label, 'Cheese');
+  assert.equal(naver.groups[1].values[0].priceDelta, 4900);
+  await page.goto(identity.url);
   const watcher = watchOptionResponses(page, identity.url);
   await page.route('**/products/shirt.json', (route) => route.fulfill({ json: shopify }));
   await page.evaluate(() => fetch('/products/shirt.json'));

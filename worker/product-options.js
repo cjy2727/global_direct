@@ -37,8 +37,9 @@ export function extractProductOptions({ html = null } = {}) {
       inputType: /e-?mail|이메일/i.test(name) ? 'email' : /phone|연락처|전화/i.test(name) ? 'tel' : 'text',
       placeholder: type === 'text' ? clean(control.getAttribute('placeholder') || control.getAttribute('title')) : '',
       values: choices, priceDelta: type === 'text' ? number(control.getAttribute('price')) : null,
+      isCombination: control.getAttribute('opt_mix') === 'Y',
       source: 'dom', control: control.tagName === 'SELECT' ? 'select' : control.type === 'radio' ? 'radio' : type,
-      sourceId: clean(control.id), sourceName: clean(control.name), unavailable: !!control.disabled };
+      sourceId: clean(control.id), sourceName: clean(control.name), sourceOptionId: clean(control.getAttribute('opt_id')), unavailable: !!control.disabled };
     if (control.matches(explicit)) group.required = control.required || control.getAttribute('require') === 'Y' || control.getAttribute('opt_mandatory') === 'Y';
     groups.push(group);
     seen.set(id, group);
@@ -78,6 +79,46 @@ export function extractProductOptions({ html = null } = {}) {
       disabled: item.matches(':disabled, [aria-disabled="true"], [data-available="false"]') || /품절|sold\s*out/i.test(item.textContent),
     })).filter((item) => item.id && item.label);
     if (choices.length) add(container, 'select', clean(container.id || name), name, choices);
+  }
+  // Naver uses product-scoped tracking attributes on custom option menus.
+  if (/^(brand|smartstore)\.naver\.com$/i.test(location.hostname)) {
+    for (const trigger of root.querySelectorAll('[aria-haspopup="listbox"][data-shp-area="pcs.optselect"], [aria-haspopup="listbox"][data-shp-area="pcs.addedoptselect"]')) {
+      if (trigger.closest(excluded)) continue;
+      const area = trigger.getAttribute('data-shp-area');
+      const name = clean(trigger.getAttribute('data-shp-contents-type'));
+      if (!name) continue;
+      const choices = [...trigger.parentElement.querySelectorAll('[role="option"]')].filter(item => item.getAttribute('data-shp-area') === area && clean(item.getAttribute('data-shp-contents-type')) === name).slice(0, 200).map(item => {
+        const label = clean(item.getAttribute('data-shp-contents-id'));
+        const delta = clean(item.textContent).match(/\(([+-][\d,]+)\s*\uC6D0\)/);
+        return { id: label, label, priceDelta: delta ? number(delta[1]) : null,
+          disabled: item.getAttribute('aria-disabled') === 'true' || /\uD488\uC808|sold\s*out/i.test(item.textContent) };
+      }).filter(choice => choice.label);
+      const sourceId = `naver-${area}-${name}`;
+      add(trigger, 'select', sourceId, name, choices);
+      const group = seen.get(`option-${sourceId}`);
+      if (group) { group.required = area === 'pcs.optselect'; group.source = 'naver'; group.unavailable = trigger.getAttribute('aria-disabled') === 'true'; }
+    }
+  }
+  // MakeShop can leave independent selects empty while retaining their definitions in page state.
+  // Match both the current product and the DOM option ID; never read customer input or infer stock.
+  if (html === null) {
+    const productId = new URL(location.href).searchParams.get('branduid');
+    const basic = window.optionJsonData?.basic;
+    if (productId && basic && typeof basic === 'object') {
+      for (const entries of Object.values(basic).slice(0, 40)) {
+        if (!entries || typeof entries !== 'object') continue;
+        for (const [valueId, row] of Object.entries(entries).slice(0, 200)) {
+          if (!row || String(row.uid) !== productId || row.opt_type !== 'SELECT'
+            || row.opt_mix !== 'N' || row.opt_use !== 'Y') continue;
+          const group = groups.find(item => item.control === 'select' && item.sourceOptionId === String(row.opt_id));
+          if (!group || group.values.length && group.source !== 'makeshop') continue;
+          const label = clean(row.opt_value);
+          if (!label || group.values.some(value => value.id === valueId)) continue;
+          group.values.push({ id: valueId, label, priceDelta: number(row.opt_price), disabled: false });
+          group.source = 'makeshop';
+        }
+      }
+    }
   }
   return groups;
 }

@@ -65,7 +65,10 @@ export async function exploreSelectOptions(page, initial, { budget = 8000, limit
     return route.fallback();
   };
   await page.route('**/*', guard);
-  const locate = (group) => group.sourceId ? page.locator(`select[id=${JSON.stringify(group.sourceId)}]`)
+  // Shared optionlist[] names need the platform option ID to identify one control.
+  const locate = (group) => group.sourceOptionId
+    ? page.locator(`select[name=${JSON.stringify(group.sourceName)}][opt_id=${JSON.stringify(group.sourceOptionId)}]`)
+    : group.sourceId ? page.locator(`select[id=${JSON.stringify(group.sourceId)}]`)
     : page.locator(`select[name=${JSON.stringify(group.sourceName)}]`);
   const original = [];
   try {
@@ -111,7 +114,29 @@ export async function exploreSelectOptions(page, initial, { budget = 8000, limit
 }
 
 /** 여러 근거를 통합하고 수집 범위와 불확실성을 별도로 반환한다. */
+/** Open only product option menus; never choose values or permit write requests. */
+async function expandNaverOptionMenus(page) {
+  if (!/^(brand|smartstore)\.naver\.com$/i.test(new URL(page.url()).hostname)) return;
+  const guard = route => {
+    const request = route.request();
+    return !['GET', 'HEAD'].includes(request.method()) || request.isNavigationRequest()
+      || /cart|checkout|order|purchase|payment|wishlist|basket/i.test(new URL(request.url()).pathname)
+      ? route.abort() : route.fallback();
+  };
+  await page.route('**/*', guard);
+  try {
+    const menus = page.locator('[aria-haspopup="listbox"][data-shp-area="pcs.optselect"], [aria-haspopup="listbox"][data-shp-area="pcs.addedoptselect"]');
+    const deadline = Date.now() + 6000;
+    for (let i = 0, count = Math.min(await menus.count(), 20); i < count && Date.now() < deadline; i++) {
+      const menu = menus.nth(i);
+      if (!await menu.isVisible() || await menu.getAttribute('aria-expanded') === 'true' || await menu.getAttribute('aria-disabled') === 'true') continue;
+      try { await menu.click({ timeout: Math.max(1, Math.min(1000, deadline - Date.now())) }); await page.waitForTimeout(150); } catch {}
+    }
+  } finally { await page.unroute('**/*', guard); }
+}
+
 export async function collectOptions(page, { sourceHtml, identity, responses }) {
+  await expandNaverOptionMenus(page);
   const live = await page.evaluate(extractProductOptions, {});
   const original = sourceHtml ? await page.evaluate(extractProductOptions, { html: sourceHtml }) : [];
   // 원본 HTML은 라이브에서 사라진 필드만 보완한다. 오래된 선택값/재고로 덮어쓰지 않는다.
@@ -159,7 +184,9 @@ export async function collectOptions(page, { sourceHtml, identity, responses }) 
     groups = combineStructuredOptions(groups, best);
     complete = best.groups[0].combinationsComplete && groups.every((group) => group.type === 'text' || best.groups.some((item) => item.id === group.id));
   } else {
-    const explored = await exploreSelectOptions(page, groups);
+    // Dependent platform options need more time to traverse each matrix branch.
+    const budget = groups.some((group) => group.sourceOptionId) ? 30000 : 8000;
+    const explored = await exploreSelectOptions(page, groups, { budget });
     groups = explored.groups;
     // DOM만으로는 숨겨진 필드나 늦은 응답의 부재를 증명할 수 없어 확인 필요로 둔다.
   }
