@@ -7,7 +7,6 @@ services:
     ports:
       - "8088:80"
     environment:
-      PRODUCT_WORKER_URL: "http://127.0.0.1:3000"
       WORKER_TOKEN: "local_worker_token_change_me"
     volumes:
       - ./public:/var/www/html/public:ro

@@ -15,14 +15,14 @@ final class ProductService
             throw new RuntimeException('올바른 상품 URL을 입력해 주세요.');
         }
 
-        $endpoint = rtrim((string) env_value('PRODUCT_WORKER_URL'), '/') . '/analyze';
+        $endpoint = 'http://127.0.0.1:3000/analyze';
         $context = stream_context_create([
             'http' => [
                 'method' => 'POST',
                 'timeout' => 55,
                 'ignore_errors' => true,
                 'header' => "Content-Type: application/json\r\n"
-                    . 'X-Worker-Token: ' . env_value('WORKER_TOKEN') . "\r\n",
+                    . 'X-Worker-Token: local_worker_token_change_me' . "\r\n",
                 'content' => json_encode(['url' => $url], JSON_UNESCAPED_SLASHES),
             ],
         ]);

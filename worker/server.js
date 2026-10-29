@@ -6,7 +6,7 @@ import { extractProductContent } from './product-content.js';
 import { collectOptions, waitForOptions, watchOptionResponses } from './option-collector.js';
 
 const PORT = 3000;
-const TOKEN = process.env.WORKER_TOKEN || '';
+const TOKEN = 'local_worker_token_change_me';
 const MAX_BODY = 16 * 1024;
 
 function isPrivateIp(address) {
