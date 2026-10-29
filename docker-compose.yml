@@ -1,8 +1,7 @@
 services:
   nginx:
     image: nginx:1.27-alpine
-    ports:
-      - "8088:80"
+    network_mode: "service:php"
     volumes:
       - ./public:/var/www/html/public:ro
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
@@ -14,6 +13,8 @@ services:
     build:
       context: .
       dockerfile: php/Dockerfile
+    ports:
+      - "8088:80"
     environment:
       PRODUCT_WORKER_URL: "${PRODUCT_WORKER_URL}"
       WORKER_TOKEN: "${WORKER_TOKEN}"
