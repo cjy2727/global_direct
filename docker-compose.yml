@@ -1,18 +1,9 @@
 services:
-  nginx:
-    image: nginx:1.27-alpine
-    network_mode: "service:php"
-    volumes:
-      - ./public:/var/www/html/public:ro
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      - php
-
-  php:
-    image: globaldirect-php:latest
+  globaldirect:
+    image: globaldirect:latest
     build:
       context: .
-      dockerfile: php/Dockerfile
+      dockerfile: Dockerfile
     ports:
       - "8088:80"
     environment:
@@ -22,27 +13,19 @@ services:
       - ./public:/var/www/html/public:ro
       - ./src:/var/www/html/src:ro
       - ./tests:/var/www/html/tests:ro
-
-  playwright:
-    image: globaldirect-playwright:latest
-    network_mode: "service:php"
-    depends_on:
-      - php
-    build:
-      context: ./worker
-    init: true
-    command: ["node", "--watch", "server.js"]
-    environment:
-      WORKER_TOKEN: "${WORKER_TOKEN}"
-    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./worker/server.js:/app/server.js:ro
       - ./worker/product-content.js:/app/product-content.js:ro
       - ./worker/product-options.js:/app/product-options.js:ro
       - ./worker/option-sources.js:/app/option-sources.js:ro
       - ./worker/option-collector.js:/app/option-collector.js:ro
       - ./worker/tests:/app/tests:ro
+    init: true
+    restart: unless-stopped
+    shm_size: "1gb"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1/health >/dev/null && node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
