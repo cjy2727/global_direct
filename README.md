@@ -1,6 +1,6 @@
 # GlobalDirect URL Analysis API
 
-상품 URL을 받아 Playwright로 분석한 결과 JSON을 반환합니다.
+상품 URL을 받아 기존 global_shopping 상품 API 또는 Playwright의 결과 JSON을 반환합니다.
 웹 화면, 회원, 세션, 장바구니, 주문, MySQL, Redis를 사용하지 않습니다.
 
 ## 실행
@@ -43,7 +43,7 @@ Codespaces 재시작 또는 네트워크 재생성 후에도 위 명령으로 �
 
 성공: HTTP 200, {"ok":true,"product":{...}}
 
-product는 worker 결과 전체입니다. title, price, currency, sourceUrl, finalUrl,
+product는 상품 조회 결과입니다. title, price, currency, sourceUrl, finalUrl,
 images, description, content, optionGroups, optionAnalysis, status 등 수집된 필드를 반환합니다.
 사이트에 따라 필드가 누락되거나 null일 수 있습니다. needs_review는 불완전한 결과입니다.
 저장된 상품 ID나 이 프로젝트의 상품 상세 페이지 주소는 생성하지 않습니다.
@@ -68,14 +68,35 @@ CORS는 브라우저 접근 제어이며 API 인증 기능은 아닙니다.
 
 ## 구성 및 검증
 
-Nginx -> PHP API -> 내부 Playwright worker -> 외부 상품 페이지.
+Nginx -> PHP API -> Chromium -> 페이지 내 상품 API 응답 / 기존 페이지 분석.
+
+플랫폼·운영 상점 사전 판별과 PHP의 직접 상품 API 호출은 사용하지 않습니다.
+영문 Chromium(en-US)에서 페이지를 열기 전 네트워크 감시를 등록합니다.
+global_shopping 위젯이 있으면 임시 브라우저에서 Allow Cookies를 누르고 새로고침한 뒤,
+초기 요청 완료를 기다려 `detectedUIDExtend()`와 상품 조회 전용 `fetchProduct()`를 실행합니다.
+장바구니 추가 버튼이나 주문·결제 기능은 실행하지 않습니다. 브라우저 컨텍스트는 요청 후 폐기합니다.
+
+app.malltail.com 또는 app2.malltail.com의 `/global_shopping/api.php?a=product` 응답 중
+현재 상품 UID와 일치하고 `status=success`인 데이터를 사용합니다.
+개발서버 global_shopping 요청은 차단합니다. API 응답 원본은 `globalShopping.products`에
+보존하며 기본 재고(`options.basic`)도 유지합니다. 선택 옵션은 `optionGroups`로 변환합니다.
+정상 응답을 얻으면 페이지의 가격·이미지·옵션·상세설명은 추가 분석하지 않습니다.
+빈 선택 옵션과 상세설명은 API의 빈 값 그대로 처리하며, 상세 HTML이 있으면 API HTML만 변환합니다.
+조합별 상태를 확인하지 못한 옵션은 `optionAnalysis.status=partial`로 표시합니다.
+상세설명이 비어 있다는 이유만으로 `needs_review`를 지정하지 않습니다.
+
+위젯 준비·상품 응답 대기는 최대 12초입니다. API 응답이 없거나 실패하면 열린 페이지에서
+기존 Playwright 분석을 수행합니다. 위젯이 없는 페이지는 짧은 발견 대기 후 기존 분석으로 진행합니다.
 Worker의 URL 검사, 내부 네트워크 차단, 토큰 검증, 추출 로직은 유지합니다.
 로그인 요구, 자동화 차단, 사이트 구조에 따라 정보가 누락될 수 있습니다.
 
-    docker compose exec -T php php tests/AnalysisApiTest.php
-    docker compose exec -T playwright node tests/product-content.test.js
-    docker compose exec -T playwright node tests/product-options.test.js
-    docker compose exec -T playwright node tests/option-collection.test.js
+    docker compose exec -T globaldirect node /app/tests/global-shopping.test.js
+    docker compose exec -T globaldirect php /var/www/html/tests/AnalysisApiTest.php
+    docker compose exec -T globaldirect node /app/tests/product-content.test.js
+    docker compose exec -T globaldirect node /app/tests/product-options.test.js
+    docker compose exec -T globaldirect node /app/tests/option-collection.test.js
 
-API 테스트는 로컬 worker 응답 fixture를 사용합니다. 실제 상점 정확성 검증과 다릅니다.
+네트워크 수집 테스트는 비식별 로컬 HTML/API fixture를 사용합니다. HTTP API 테스트는
+로컬 worker 응답 fixture로 HTTP 계약을 검증합니다. 실제 상점 정확성 검증과 다릅니다.
+`PRODUCT_WORKER_URL`은 `/analyze`를 포함하는 전체 내부 워커 URL입니다(기본값 `http://127.0.0.1:3000/analyze`).
 build-and-export.bat는 PHP/Playwright/Nginx 이미지만 반출합니다.

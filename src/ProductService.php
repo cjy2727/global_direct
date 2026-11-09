@@ -6,23 +6,25 @@ use RuntimeException;
 
 final class ProductService
 {
-    /** Return the worker result without storing products or job state. */
+    /** Browser network capture and page fallback both run in the worker. */
     public function analyze(string $url): array
     {
         $url = trim($url);
         $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
-        if (strlen($url) > 2048 || !filter_var($url, FILTER_VALIDATE_URL) || !in_array($scheme, ['http', 'https'], true)) {
+        $parts = parse_url($url);
+        if (strlen($url) > 2048 || !filter_var($url, FILTER_VALIDATE_URL) || !in_array($scheme, ['http', 'https'], true)
+            || isset($parts['user']) || isset($parts['pass']) || preg_match('/[\r\n]/', $url)) {
             throw new RuntimeException('올바른 상품 URL을 입력해 주세요.');
         }
 
-        $endpoint = 'http://127.0.0.1:3000/analyze';
+        $endpoint = env_value('PRODUCT_WORKER_URL', 'http://127.0.0.1:3000/analyze');
         $context = stream_context_create([
             'http' => [
                 'method' => 'POST',
                 'timeout' => 55,
                 'ignore_errors' => true,
                 'header' => "Content-Type: application/json\r\n"
-                    . 'X-Worker-Token: local_worker_token_change_me' . "\r\n",
+                    . 'X-Worker-Token: ' . env_value('WORKER_TOKEN', 'local_worker_token_change_me') . "\r\n",
                 'content' => json_encode(['url' => $url], JSON_UNESCAPED_SLASHES),
             ],
         ]);

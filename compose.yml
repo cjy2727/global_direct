@@ -14,6 +14,7 @@ services:
       - ./tests:/var/www/html/tests:ro
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./worker/server.js:/app/server.js:ro
+      - ./worker/global-shopping.js:/app/global-shopping.js:ro
       - ./worker/product-content.js:/app/product-content.js:ro
       - ./worker/product-options.js:/app/product-options.js:ro
       - ./worker/option-sources.js:/app/option-sources.js:ro

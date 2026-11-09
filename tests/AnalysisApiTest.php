@@ -51,12 +51,15 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' || $_SERVER['REQUEST_URI'] !== '/analy
     || ($_SERVER['HTTP_X_WORKER_TOKEN'] ?? '') !== 'fixture-only-token'
     || ($input['url'] ?? '') !== 'https://shop.example.test/item') {
     http_response_code(422);
-    echo json_encode(['ok' => false, 'message' => 'Worker request contract mismatch']);
+    echo json_encode(['ok' => false, 'message' => 'Worker request contract mismatch: ' . json_encode([
+        'method' => $_SERVER['REQUEST_METHOD'], 'path' => $_SERVER['REQUEST_URI'],
+        'tokenMatches' => ($_SERVER['HTTP_X_WORKER_TOKEN'] ?? '') === 'fixture-only-token', 'url' => $input['url'] ?? null,
+    ])]);
     exit;
 }
 echo file_get_contents(__DIR__ . '/payload.json');
 PHP);
-    putenv('PRODUCT_WORKER_URL=http://127.0.0.1:' . $workerPort);
+    putenv('PRODUCT_WORKER_URL=http://127.0.0.1:' . $workerPort . '/analyze');
     putenv('WORKER_TOKEN=fixture-only-token');
     foreach ([[$workerPort, $temp . '/worker.php'], [$apiPort, dirname(__DIR__) . '/public/index.php']] as [$port, $router]) {
         $process = proc_open([PHP_BINARY, '-S', '127.0.0.1:' . $port, $router],
@@ -73,7 +76,7 @@ PHP);
     }
     $path = '/api/products/analyze';
     [$status, $data, $headers] = request_api($apiPort, $path, 'POST', json_encode(['url' => '  https://shop.example.test/item  ']), 'https://post.malltail.com');
-    check($status === 200 && $data === ['ok' => true, 'product' => $fixture], 'Full product payload was not preserved');
+    check($status === 200 && $data === ['ok' => true, 'product' => $fixture], 'Full product payload was not preserved: ' . json_encode([$status, $data]));
     check(!str_contains(strtolower($headers), 'set-cookie:'), 'Unexpected session cookie');
     check(str_contains($headers, 'Access-Control-Allow-Origin: https://post.malltail.com'), 'Missing success CORS header');
     foreach (['{}', '{', '{"url":[]}', 'null'] as $body) {

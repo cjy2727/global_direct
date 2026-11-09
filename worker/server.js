@@ -4,6 +4,7 @@ import net from 'node:net';
 import { chromium } from 'playwright';
 import { extractProductContent } from './product-content.js';
 import { collectOptions, waitForOptions, watchOptionResponses } from './option-collector.js';
+import { watchShoppingResponses, readShoppingProduct } from './global-shopping.js';
 
 const PORT = 3000;
 const TOKEN = 'local_worker_token_change_me';
@@ -52,14 +53,16 @@ function parsePrice(value) {
 async function analyze(rawUrl) {
   await assertPublicUrl(rawUrl);
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ locale: 'ko-KR', userAgent: 'GlobalDirectProductReader/1.0' });
+  const context = await browser.newContext({ locale: 'en-US', extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' } });
   const page = await context.newPage();
   const optionResponses = watchOptionResponses(page, rawUrl);
+  const shoppingResponses = watchShoppingResponses(page);
   page.setDefaultTimeout(8000);
   await page.route('**/*', async (route) => {
     try {
       const requestUrl = new URL(route.request().url());
       if (!['http:', 'https:'].includes(requestUrl.protocol)) return route.abort('blockedbyclient');
+      if (requestUrl.hostname.endsWith('.shiptao.kr') && requestUrl.pathname.startsWith('/global_shopping/')) return route.abort('blockedbyclient');
       await assertPublicUrl(requestUrl.href);
       if (['font', 'media'].includes(route.request().resourceType())) return route.abort('blockedbyclient');
       return route.continue();
@@ -88,6 +91,10 @@ async function analyze(rawUrl) {
       };
     }
     if (!response || response.status() >= 400) throw new Error(`상품 페이지 응답 오류 (${response?.status() || '응답 없음'})`);
+    const shoppingAnalysis = {};
+    const shoppingProduct = await readShoppingProduct(page, shoppingResponses, rawUrl, { diagnostics: shoppingAnalysis });
+    if (shoppingProduct) return shoppingProduct;
+    console.warn(JSON.stringify({ event: 'shopping_api_fallback', ...shoppingAnalysis }));
     // 이동 전에 응답을 읽되, 본문을 읽지 못해도 현재 DOM 분석은 계속한다.
     const sourceHtml = await response.text().catch(() => null);
     await waitForOptions(page);
@@ -166,10 +173,11 @@ async function analyze(rawUrl) {
     const price = parsePrice(result.price);
     const currency = String(result.currency || 'UNKNOWN').trim().toUpperCase();
     const options = await collectOptions(page, { sourceHtml, responses: optionResponses, identity: { url: page.url(), title: result.title, price, currency } });
-    return { ...result, ...content, optionGroups: options.groups, optionAnalysis: options.analysis,
+    return { ...result, ...content, shoppingAnalysis, optionGroups: options.groups, optionAnalysis: options.analysis,
       price, currency, sourceUrl: rawUrl, finalUrl: page.url(),
       status: result.title && price && ['complete', 'none'].includes(options.analysis.status) ? 'complete' : 'needs_review' };
   } finally {
+    shoppingResponses.dispose();
     await optionResponses.finish();
     await context.close();
     await browser.close();
