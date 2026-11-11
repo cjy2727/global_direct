@@ -47,6 +47,20 @@ try {
 <?php
 header('Content-Type: application/json');
 $input = json_decode(file_get_contents('php://input'), true);
+if (($_SERVER['HTTP_X_WORKER_TOKEN'] ?? '') === 'fixture-only-token') {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_SERVER['REQUEST_URI'] === '/jobs') {
+        http_response_code(202);
+        echo json_encode(['ok' => true, 'job' => ['id' => str_repeat('a', 48), 'status' => 'queued']]);
+        exit;
+    }
+    if ($_SERVER['REQUEST_METHOD'] === 'GET' && $_SERVER['REQUEST_URI'] === '/jobs/' . str_repeat('a', 48)) {
+        echo json_encode(['ok' => true, 'job' => ['id' => str_repeat('a', 48), 'status' => 'completed']]);
+        exit;
+    }
+    if ($_SERVER['REQUEST_URI'] === '/analyze' && ($input['url'] ?? '') === 'https://shop.example.test/limited') {
+        http_response_code(429); echo json_encode(['ok' => false, 'message' => 'fixture rate limit']); exit;
+    }
+}
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || $_SERVER['REQUEST_URI'] !== '/analyze'
     || ($_SERVER['HTTP_X_WORKER_TOKEN'] ?? '') !== 'fixture-only-token'
     || ($input['url'] ?? '') !== 'https://shop.example.test/item') {
@@ -86,6 +100,13 @@ PHP);
         check(request_api($apiPort, $path, 'POST', json_encode(['url' => $url]))[0] === 422, 'Invalid URL handling');
     }
     check(request_api($apiPort, $path)[0] === 405, 'Wrong method handling');
+    [$status, $data] = request_api($apiPort, '/api/products/jobs', 'POST', '{"url":"https://shop.example.test/item"}');
+    check($status === 202 && $data['job']['status'] === 'queued', 'Async submission handling');
+    [$status, $data, $headers] = request_api($apiPort, '/api/products/jobs/' . str_repeat('a', 48), 'GET', '', 'https://post.malltail.com');
+    check($status === 200 && $data['job']['status'] === 'completed', 'Async polling handling');
+    check(str_contains($headers, 'Cache-Control: no-store'), 'Job capabilities must not be HTTP cached');
+    [$status, $data, $headers] = request_api($apiPort, $path, 'POST', '{"url":"https://shop.example.test/limited"}');
+    check($status === 429 && str_contains($headers, 'Retry-After: 60'), 'Rate limit status propagation');
     foreach (['/', '/cart', '/account', '/orders', '/api/cart', '/api/session', '/products/0123456789abcdef', '/request-ai'] as $route) {
         [$status, $data] = request_api($apiPort, $route);
         check($status === 404 && $data['ok'] === false, 'Legacy route remains: ' . $route);

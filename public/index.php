@@ -17,8 +17,9 @@ $allowedOrigin = preg_match(
 header('Vary: Origin', false);
 if ($allowedOrigin) {
     header('Access-Control-Allow-Origin: ' . $origin);
-    header('Access-Control-Allow-Methods: POST, OPTIONS');
+    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
     header('Access-Control-Allow-Headers: Content-Type');
+    header('Access-Control-Expose-Headers: Retry-After');
 }
 
 if ($method === 'OPTIONS') {
@@ -39,7 +40,19 @@ function json_response(array $payload, int $status = 200): never
 if ($path === '/health' && $method === 'GET') {
     json_response(['ok' => true, 'service' => 'globaldirect']);
 }
-if ($path === '/api/products/analyze') {
+$jobRoute = preg_match('~^/api/products/jobs/([a-f0-9]{48})$~', $path, $jobMatch) === 1;
+if ($jobRoute) {
+    header('Cache-Control: no-store');
+    if ($method !== 'GET') { header('Allow: GET, OPTIONS'); json_response(['ok' => false, 'message' => 'GET 요청만 지원합니다.'], 405); }
+    try { json_response((new ProductService())->job($jobMatch[1])); }
+    catch (RuntimeException $exception) {
+        $status = in_array($exception->getCode(), [400, 404, 429, 503, 504], true) ? $exception->getCode() : 422;
+        if (in_array($status, [429, 503], true)) header('Retry-After: 60');
+        json_response(['ok' => false, 'message' => $exception->getMessage()], $status);
+    }
+}
+if (in_array($path, ['/api/products/analyze', '/api/products/jobs'], true)) {
+    header('Cache-Control: no-store');
     if ($method !== 'POST') {
         header('Allow: POST, OPTIONS');
         json_response(['ok' => false, 'message' => 'POST 요청만 지원합니다.'], 405);
@@ -53,9 +66,13 @@ if ($path === '/api/products/analyze') {
         json_response(['ok' => false, 'message' => 'url 문자열이 필요합니다.'], 400);
     }
     try {
-        json_response(['ok' => true, 'product' => (new ProductService())->analyze($input['url'])]);
+        $service = new ProductService();
+        if ($path === '/api/products/jobs') json_response($service->submit($input['url']), 202);
+        json_response(['ok' => true, 'product' => $service->analyze($input['url'])]);
     } catch (RuntimeException $exception) {
-        json_response(['ok' => false, 'message' => $exception->getMessage()], 422);
+        $status = in_array($exception->getCode(), [400, 404, 429, 503, 504], true) ? $exception->getCode() : 422;
+        if (in_array($status, [429, 503], true)) header('Retry-After: 60');
+        json_response(['ok' => false, 'message' => $exception->getMessage()], $status);
     }
 }
 json_response(['ok' => false, 'message' => '경로를 찾을 수 없습니다.'], 404);

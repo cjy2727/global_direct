@@ -1,0 +1,9 @@
+.git
+.env
+.env.*
+!.env.example
+node_modules
+vendor
+*.log
+*.tar
+global_direct.code-workspace

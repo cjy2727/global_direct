@@ -5,3 +5,6 @@ vendor/
 node_modules/
 *.log
 *.tar
+.env
+.env.*
+!.env.example

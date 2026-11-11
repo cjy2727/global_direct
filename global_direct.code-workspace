@@ -1,11 +1,8 @@
 {
 	"folders": [
-		{
-			"path": "."
-		},
-		{
-			"path": "../dev(14.129.140.72)/home/jycha/html/delivery"
-		}
-	],
+        {
+            "path": "."
+        }
+    ],
     "settings": {}
 }

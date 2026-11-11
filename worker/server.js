@@ -5,10 +5,17 @@ import { chromium } from 'playwright';
 import { extractProductContent } from './product-content.js';
 import { collectOptions, waitForOptions, watchOptionResponses } from './option-collector.js';
 import { watchShoppingResponses, readShoppingProduct } from './global-shopping.js';
+import { loadConfig } from './config.js';
+import { AiService, collectEvidence } from './ai.js';
+import { applyOptionFallback } from './option-fallback.js';
+import { AiBrowser } from './ai-browser.js';
+import { JobManager, ServiceError } from './jobs.js';
 
 const PORT = 3000;
-const TOKEN = 'local_worker_token_change_me';
+const TOKEN = process.env.WORKER_TOKEN || 'local_worker_token_change_me';
 const MAX_BODY = 16 * 1024;
+const config = loadConfig();
+const ai = new AiService(config);
 
 function isPrivateIp(address) {
   if (net.isIPv4(address)) {
@@ -50,9 +57,14 @@ function parsePrice(value) {
   return Number.isFinite(number) && number > 0 ? Number(number.toFixed(4)) : null;
 }
 
-async function analyze(rawUrl) {
+async function analyze(rawUrl, signal) {
   await assertPublicUrl(rawUrl);
+  signal?.throwIfAborted();
   const browser = await chromium.launch({ headless: true });
+  const cancel = () => { void browser.close().catch(() => {}); };
+  signal?.addEventListener('abort', cancel, { once: true });
+  if (signal?.aborted) { await browser.close(); signal.throwIfAborted(); }
+  try {
   const context = await browser.newContext({ locale: 'en-US', extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' } });
   const page = await context.newPage();
   const optionResponses = watchOptionResponses(page, rawUrl);
@@ -76,7 +88,7 @@ async function analyze(rawUrl) {
     if (response?.status() === 403 && isCoupang) {
       const productId = sourceUrl.pathname.match(/^\/vp\/products\/(\d+)/)?.[1];
       const canonicalUrl = productId ? `${sourceUrl.origin}/vp/products/${productId}` : rawUrl;
-      return {
+      return applyOptionFallback({
         title: productId ? `쿠팡 상품 #${productId}` : '쿠팡 상품',
         price: null,
         currency: 'KRW',
@@ -87,13 +99,14 @@ async function analyze(rawUrl) {
         availability: '',
         sourceUrl: rawUrl,
         finalUrl: canonicalUrl,
-        status: 'needs_review'
-      };
+        status: 'needs_review',
+        aiAnalysis: { status: 'skipped', reason: 'page_unavailable' }
+      });
     }
     if (!response || response.status() >= 400) throw new Error(`상품 페이지 응답 오류 (${response?.status() || '응답 없음'})`);
     const shoppingAnalysis = {};
     const shoppingProduct = await readShoppingProduct(page, shoppingResponses, rawUrl, { diagnostics: shoppingAnalysis });
-    if (shoppingProduct) return shoppingProduct;
+    if (shoppingProduct) return applyOptionFallback({ ...shoppingProduct, aiAnalysis: { status: 'skipped', reason: config.aiEnabled ? 'internal_api' : 'disabled' } });
     console.warn(JSON.stringify({ event: 'shopping_api_fallback', ...shoppingAnalysis }));
     // 이동 전에 응답을 읽되, 본문을 읽지 못해도 현재 DOM 분석은 계속한다.
     const sourceHtml = await response.text().catch(() => null);
@@ -134,7 +147,8 @@ async function analyze(rawUrl) {
       const meta = (selector) => document.querySelector(selector)?.getAttribute('content') || '';
       const hostname = location.hostname.toLowerCase();
       const isRakuten = hostname === 'rakuten.co.jp' || hostname.endsWith('.rakuten.co.jp');
-      const title = text(product.name) || text(meta('meta[property="og:title"]')) || text(document.querySelector('h1')?.textContent) || text(document.title);
+      const explicitTitle = text(product.name) || text(meta('meta[property="og:title"]')) || text(document.querySelector('h1')?.textContent);
+      const title = explicitTitle || text(document.title);
       const priceValues = [
         offer.price,
         offer.lowPrice,
@@ -160,6 +174,7 @@ async function analyze(rawUrl) {
       }
       return {
         title,
+        titleAnalysis: { source: explicitTitle ? 'product_metadata' : 'document_title' },
         price,
         currency,
         structuredProduct: product,
@@ -173,27 +188,46 @@ async function analyze(rawUrl) {
     const price = parsePrice(result.price);
     const currency = String(result.currency || 'UNKNOWN').trim().toUpperCase();
     const options = await collectOptions(page, { sourceHtml, responses: optionResponses, identity: { url: page.url(), title: result.title, price, currency } });
-    return { ...result, ...content, shoppingAnalysis, optionGroups: options.groups, optionAnalysis: options.analysis,
+    const product = { ...result, ...content, shoppingAnalysis, optionGroups: options.groups, optionAnalysis: options.analysis,
       price, currency, sourceUrl: rawUrl, finalUrl: page.url(),
       status: result.title && price && ['complete', 'none'].includes(options.analysis.status) ? 'complete' : 'needs_review' };
+    const evidence = await page.evaluate(collectEvidence);
+    // Keep public DOM option names even when the generic option collector cannot interpret a control.
+    const enriched = await ai.browse(product, new AiBrowser(page, { signal }), signal);
+    return applyOptionFallback(enriched, evidence);
   } finally {
     shoppingResponses.dispose();
     await optionResponses.finish();
     await context.close();
-    await browser.close();
   }
+  } finally { signal?.removeEventListener('abort', cancel); await browser.close(); }
 }
 
-const server = http.createServer((req, res) => {
+const jobs = new JobManager(config, analyze);
+const server = http.createServer(async (req, res) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   if (req.method === 'GET' && req.url === '/health') return res.end(JSON.stringify({ ok: true }));
-  if (req.method !== 'POST' || req.url !== '/analyze') { res.statusCode = 404; return res.end(JSON.stringify({ ok: false, message: '경로를 찾을 수 없습니다.' })); }
   if (!TOKEN || req.headers['x-worker-token'] !== TOKEN) { res.statusCode = 403; return res.end(JSON.stringify({ ok: false, message: '접근할 수 없습니다.' })); }
+  const identity = { ip: String(req.headers['x-client-ip'] || 'unknown'), user: String(req.headers['x-client-user'] || '') };
+  const sendError = error => { res.statusCode = error.status || 422; if ([429, 503].includes(res.statusCode)) res.setHeader('Retry-After', '60'); res.end(JSON.stringify({ ok: false, code: error.code || 'analysis_failed', message: error.message || '상품 분석 실패' })); };
+  const jobId = req.url?.match(/^\/jobs\/([a-f0-9]{48})$/)?.[1];
+  if (req.method === 'GET' && jobId) {
+    try { return res.end(JSON.stringify({ ok: true, job: jobs.view(jobs.get(jobId, identity)) })); } catch (error) { return sendError(error); }
+  }
+  if (req.method !== 'POST' || !['/analyze', '/jobs'].includes(req.url)) { res.statusCode = 404; return res.end(JSON.stringify({ ok: false, message: '경로를 찾을 수 없습니다.' })); }
   let body = '';
   req.on('data', (chunk) => { body += chunk; if (body.length > MAX_BODY) req.destroy(); });
   req.on('end', async () => {
-    try { const input = JSON.parse(body); const product = await analyze(input.url); res.end(JSON.stringify({ ok: true, product })); }
-    catch (error) { res.statusCode = 422; res.end(JSON.stringify({ ok: false, message: error.message || '상품 페이지를 분석하지 못했습니다.' })); }
+    try {
+      let input;
+      try { input = JSON.parse(body); } catch { throw new ServiceError('invalid_json', '올바른 JSON 본문을 보내 주세요.', 400); }
+      if (typeof input?.url !== 'string') throw new ServiceError('invalid_url', 'url 문자열이 필요합니다.', 400);
+      const job = jobs.submit(input.url, identity);
+      if (req.url === '/jobs') { res.statusCode = 202; return res.end(JSON.stringify({ ok: true, job: jobs.view(job) })); }
+      await job.promise;
+      if (job.error) throw Object.assign(new Error(job.error.message), job.error);
+      res.end(JSON.stringify({ ok: true, product: job.product }));
+    } catch (error) { sendError(error); }
   });
 });
 
