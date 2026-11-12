@@ -5,16 +5,18 @@ import { chromium } from 'playwright';
 import { extractProductContent } from './product-content.js';
 import { collectOptions, waitForOptions, watchOptionResponses } from './option-collector.js';
 import { watchShoppingResponses, readShoppingProduct } from './global-shopping.js';
-import { loadConfig } from './config.js';
 import { AiService, collectEvidence } from './ai.js';
 import { applyOptionFallback } from './option-fallback.js';
 import { AiBrowser } from './ai-browser.js';
 import { JobManager, ServiceError } from './jobs.js';
+import { SettingsStore } from './settings.js';
+import { createAdminServer } from './admin-server.js';
 
 const PORT = 3000;
 const TOKEN = process.env.WORKER_TOKEN || 'local_worker_token_change_me';
 const MAX_BODY = 16 * 1024;
-const config = loadConfig();
+const settings = new SettingsStore();
+const config = settings.current();
 const ai = new AiService(config);
 
 function isPrivateIp(address) {
@@ -57,7 +59,8 @@ function parsePrice(value) {
   return Number.isFinite(number) && number > 0 ? Number(number.toFixed(4)) : null;
 }
 
-async function analyze(rawUrl, signal) {
+async function analyze(rawUrl, signal, config) {
+  const jobAi = ai.withConfig(config);
   await assertPublicUrl(rawUrl);
   signal?.throwIfAborted();
   const browser = await chromium.launch({ headless: true });
@@ -193,7 +196,7 @@ async function analyze(rawUrl, signal) {
       status: result.title && price && ['complete', 'none'].includes(options.analysis.status) ? 'complete' : 'needs_review' };
     const evidence = await page.evaluate(collectEvidence);
     // Keep public DOM option names even when the generic option collector cannot interpret a control.
-    const enriched = await ai.browse(product, new AiBrowser(page, { signal }), signal);
+    const enriched = await jobAi.browse(product, new AiBrowser(page, { signal }), signal);
     return applyOptionFallback(enriched, evidence);
   } finally {
     shoppingResponses.dispose();
@@ -203,7 +206,9 @@ async function analyze(rawUrl, signal) {
   } finally { signal?.removeEventListener('abort', cancel); await browser.close(); }
 }
 
-const jobs = new JobManager(config, analyze);
+const jobs = new JobManager(config, analyze, () => settings.current());
+const admin = createAdminServer({ settings, jobs, ai, origin: process.env.ADMIN_PUBLIC_ORIGIN || 'http://localhost:8080', onSettingsChanged: () => jobs.drain() });
+admin.listen(3001, '127.0.0.1');
 const server = http.createServer(async (req, res) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   if (req.method === 'GET' && req.url === '/health') return res.end(JSON.stringify({ ok: true }));

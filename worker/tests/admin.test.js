@@ -1,0 +1,121 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import net from 'node:net';
+import http from 'node:http';
+import { chromium } from 'playwright';
+import { SettingsStore } from '../settings.js';
+import { createAdmin } from '../admin-auth.js';
+import { createAdminServer } from '../admin-server.js';
+import { AiService } from '../ai.js';
+import { JobManager } from '../jobs.js';
+
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gd-admin-fixture-'));
+const env = { SETTINGS_FILE: path.join(dir, 'settings.json'), ADMIN_AUTH_FILE: path.join(dir, 'auth.json'), AI_USAGE_FILE: path.join(dir, 'usage.json'), RATE_LIMIT_ENABLED: 'false', AI_MODEL: 'fixture-model' };
+const reserve = net.createServer(); await new Promise(resolve => reserve.listen(0, '127.0.0.1', resolve));
+const port = reserve.address().port; await new Promise(resolve => reserve.close(resolve));
+const origin = `http://127.0.0.1:${port}`;
+let server, browser;
+try {
+  const settings = new SettingsStore(env);
+  createAdmin(env.ADMIN_AUTH_FILE, 'fixture-admin', 'fixture-password-123');
+  assert.throws(() => createAdmin(env.ADMIN_AUTH_FILE, 'fixture-admin', 'fixture-password-123'));
+  const ai = new AiService(settings.current());
+  let release; const seen = [];
+  const jobs = new JobManager(settings.current(), async (url, signal, config) => {
+    seen.push({ url, config });
+    if (url.endsWith('/hold')) await new Promise(resolve => { release = resolve; });
+    return { title: 'fixture', aiAnalysis: { status: 'skipped', reason: 'fixture' } };
+  }, () => settings.current());
+  server = createAdminServer({ settings, jobs, ai, origin, onSettingsChanged: () => jobs.drain() });
+  await new Promise(resolve => server.listen(port, '127.0.0.1', resolve));
+  let cookie = '', csrf = '';
+  const request = async (route, body, extra = {}) => {
+    const response = await fetch(`${origin}${route}`, { headers: { Origin: origin, Cookie: cookie, 'X-CSRF-Token': csrf, 'Content-Type': 'application/json', ...extra }, ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }) });
+    return { response, data: await response.json() };
+  };
+  assert.equal((await request('/api/settings')).response.status, 401);
+  assert.equal((await request('/api/login', { username: 'fixture-admin', password: 'fixture-password-123' }, { Origin: 'https://evil.test' })).response.status, 403);
+  const login = await request('/api/login', { username: 'fixture-admin', password: 'fixture-password-123' });
+  assert.equal(login.response.status, 200); csrf = login.data.csrf;
+  cookie = login.response.headers.get('set-cookie').split(';')[0];
+  assert(login.response.headers.get('set-cookie').includes('HttpOnly'));
+  assert(login.response.headers.get('set-cookie').includes('SameSite=Strict'));
+  assert.equal((await request('/api/settings', { revision: 0, values: {} }, { 'X-CSRF-Token': 'invalid' })).response.status, 403);
+  const before = settings.current();
+  assert.equal((await request('/api/settings', { revision: 0, values: { ANALYSIS_CONCURRENCY: 0 } })).response.status, 400);
+  assert.equal(settings.current(), before); assert(!fs.existsSync(env.SETTINGS_FILE));
+  assert.equal((await request('/api/settings', { revision: 0, values: { UNKNOWN_SETTING: 1 } })).response.status, 400);
+  const running = jobs.submit('https://fixture.test/hold');
+  const queued = jobs.submit('https://fixture.test/queued');
+  await new Promise(resolve => setImmediate(resolve));
+  const saved = await request('/api/settings', { revision: 0, values: { AI_ENABLED: true, AI_INPUT_USD_PER_MILLION: 0.1, AI_OUTPUT_USD_PER_MILLION: 0.5 }, apiKey: 'fixture-secret-only' });
+  assert.equal(saved.response.status, 200); assert.equal(saved.data.revision, 1);
+  assert(saved.data.apiKeyPresent); assert(!JSON.stringify(saved.data).includes('fixture-secret-only'));
+  assert(!fs.readFileSync(env.SETTINGS_FILE, 'utf8').includes('fixture-secret-only'));
+  const restored = new SettingsStore(env); assert.equal(restored.current().apiKey, 'fixture-secret-only');
+  assert.equal(seen[0].config.aiEnabled, false);
+  release(); await Promise.all([running.promise, queued.promise]);
+  assert.equal(seen[1].config.aiEnabled, true); assert.equal(seen[0].config.aiEnabled, false);
+  // Same URL under new settings cannot reuse the old result/cache/in-flight job.
+  const fresh = jobs.submit('https://fixture.test/hold'); await new Promise(resolve => setImmediate(resolve)); release(); await fresh.promise;
+  assert.equal(fresh.product.cacheAnalysis.hit, false); assert.equal(seen.length, 3);
+  assert.equal((await request('/api/settings', { revision: 0, values: {} })).response.status, 409);
+  const kept = await request('/api/settings', { revision: 1, values: {}, apiKey: '' });
+  assert.equal(kept.response.status, 200); assert.equal(settings.current().apiKey, 'fixture-secret-only');
+  const savedFile = settings.file, savedSnapshot = settings.current();
+  fs.writeFileSync(path.join(dir, 'not-a-directory'), 'fixture');
+  settings.file = path.join(dir, 'not-a-directory', 'settings.json');
+  assert.throws(() => settings.save({ revision: 2, values: { CACHE_ENABLED: false } }, 'fixture-admin'), /저장하지 못했습니다/);
+  assert.equal(settings.current(), savedSnapshot); settings.file = savedFile;
+  const overview = await request('/api/overview'); assert.equal(overview.data.ai.requests, 0);
+  const fork = ai.withConfig(settings.current()); fork.active++;
+  assert.equal(ai.active, 1); fork.active--;
+  assert.equal(fork.accounting, ai.accounting);
+  // Browser verification: actual login, settings form and saving without process restart.
+  browser = await chromium.launch({ headless: true }); const page = await browser.newPage();
+  await page.goto(origin);
+  await page.locator('input[name="username"]').fill('fixture-admin');
+  await page.locator('input[name="password"]').fill('fixture-password-123');
+  await page.locator('#login-form button').click();
+  await page.locator('#field-AI_ENABLED').waitFor();
+  assert.equal(await page.locator('#api-key').inputValue(), '');
+  await page.locator('#field-AI_ENABLED').selectOption('false');
+  await page.locator('#field-ANALYSIS_CONCURRENCY').fill('2');
+  await page.locator('#save').click();
+  await page.waitForFunction(() => document.querySelector('#notice').textContent.includes('저장했습니다'));
+  assert.equal(settings.current().concurrency, 2); assert.equal(settings.current().aiEnabled, false);
+  assert.equal(await page.locator('#api-key').inputValue(), '');
+  await page.screenshot({ path: '/tmp/globaldirect-admin-test.png', fullPage: true });
+  await page.setViewportSize({ width: 375, height: 812 });
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await page.locator('#logout').click(); await page.locator('#login-form').waitFor();
+  const badHostStatus = await new Promise((resolve, reject) => {
+    const req = http.get(`${origin}/api/session`, { headers: { Host: 'evil.test' } }, res => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+    req.on('error', reject);
+  });
+  assert.equal(badHostStatus, 403);
+  // Rate limiting does not expose raw credential failures.
+  for (let i = 0; i < 5; i++) await request('/api/login', { username: 'wrong', password: 'wrong' }, { 'X-Admin-Client-IP': 'rate-fixture' });
+  assert.equal((await request('/api/login', { username: 'wrong', password: 'wrong' }, { 'X-Admin-Client-IP': 'rate-fixture' })).response.status, 429);
+  await request('/api/logout', {}); assert.equal((await request('/api/settings')).response.status, 401);
+  settings.save({ revision: settings.current().revision, values: {}, clearApiKey: true }, 'fixture-admin');
+  assert.equal(settings.current().apiKey, '');
+  // Lowering concurrency must wait for existing jobs rather than starting another one.
+  let liveConfig = { ...settings.current(), concurrency: 2 }, started = [];
+  const releases = new Map();
+  const limited = new JobManager(liveConfig, async url => { started.push(url); await new Promise(resolve => releases.set(url, resolve)); return {}; }, () => liveConfig);
+  const a = limited.submit('https://fixture.test/a'), b = limited.submit('https://fixture.test/b'), queuedC = limited.submit('https://fixture.test/c');
+  await new Promise(resolve => setImmediate(resolve));
+  liveConfig = { ...liveConfig, concurrency: 1 }; limited.drain();
+  releases.get('https://fixture.test/a')(); await a.promise; await new Promise(resolve => setImmediate(resolve));
+  assert.equal(started.length, 2);
+  releases.get('https://fixture.test/b')(); await b.promise; await new Promise(resolve => setImmediate(resolve));
+  assert.equal(started.length, 3); releases.get('https://fixture.test/c')(); await queuedC.promise;
+  console.log('PASS: authentication/origin/CSRF/rate limits, validation/atomic rollback, encrypted key/blank preservation, revision conflict, persisted settings, in-flight snapshot/new-job reload/cache separation, shared accounting, Chromium login/form/save/logout');
+} finally {
+  if (browser) await browser.close();
+  if (server) await new Promise(resolve => server.close(resolve));
+  for (const file of fs.readdirSync(dir)) fs.unlinkSync(path.join(dir, file)); fs.rmdirSync(dir);
+}

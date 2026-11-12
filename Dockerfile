@@ -57,6 +57,6 @@ COPY worker/ ./
 # Supervisor 설정
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-EXPOSE 80
+EXPOSE 80 8080
 
 CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

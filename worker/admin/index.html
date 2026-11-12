@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GlobalDirect 운영 관리</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body><header><div><span class="brand">GlobalDirect</span><span class="tag">운영 관리</span></div><button id="logout" hidden>로그아웃</button></header>
+<main><div class="intro"><h1>상품 분석 운영 관리</h1><p>AI 사용과 분석 한도를 관리합니다. 저장한 설정은 새 작업부터 적용됩니다.</p></div>
+<div id="notice" role="status" hidden></div>
+<section id="login-panel" class="card" hidden><h2>운영자 로그인</h2><form id="login-form"><label>운영자 ID<input name="username" autocomplete="username" required maxlength="40"></label><label>비밀번호<input name="password" type="password" autocomplete="current-password" required maxlength="200"></label><button type="submit" class="primary">로그인</button></form></section>
+<section id="setup-panel" class="card" hidden><h2>최초 운영자 등록이 필요합니다</h2><p>서버 터미널에서 아래 명령을 실행하고 ID와 비밀번호를 지정해 주세요. 비밀번호는 화면에 표시되지 않습니다.</p><p>로컬 Docker</p><pre>docker compose exec globaldirect node admin-setup.js</pre><p>서버 직접 설치 (워커 실행 계정과 환경 사용)</p><pre>node --env-file=.env worker/admin-setup.js</pre><p>등록 후 이 페이지를 새로고침하세요. 기본 비밀번호는 제공하지 않습니다.</p></section>
+<div id="dashboard" hidden>
+<section class="metrics" aria-label="운영 현황"><article><span>실행 중</span><strong id="running">—</strong></article><article><span>대기 중</span><strong id="queued">—</strong></article><article><span>오늘 AI 호출</span><strong id="requests">—</strong></article><article><span>오늘 예상 비용 (USD)</span><strong id="cost">—</strong></article></section>
+<p class="caption">AI 집계는 UTC 날짜 기준이며 미확인 호출의 예약 비용을 포함합니다. 실제 청구 금액과 다를 수 있습니다.</p>
+<form id="settings-form"><section class="card"><div class="section-heading"><h2>AI 설정</h2><span id="revision"></span></div><div id="ai-fields" class="fields"></div><div class="key-box"><label>새 API 키<input id="api-key" type="password" autocomplete="new-password" placeholder="변경할 때만 입력하세요" maxlength="4096"></label><p id="key-status"></p><label class="check"><input id="clear-key" type="checkbox">등록된 키 삭제</label><p class="caption">빈 입력은 기존 키를 유지합니다. 저장된 키는 다시 표시하지 않습니다. API 주소는 신뢰하는 제공업체의 HTTPS 주소를 사용하세요.</p></div></section>
+<section class="card"><h2>분석·요청 제한</h2><div id="limit-fields" class="fields"></div></section><div class="save-bar"><p>실행 중인 작업은 기존 설정으로 완료합니다.</p><button type="submit" class="primary" id="save">설정 저장</button></div></form>
+<section class="card"><h2>최근 실패</h2><ul id="failures"></ul></section><section class="card"><h2>설정 변경 기록</h2><ul id="audit"></ul></section></div>
+</main><footer>GlobalDirect · 운영자 전용 · 설정 변경으로 사용량 집계는 초기화되지 않습니다.</footer></body></html>

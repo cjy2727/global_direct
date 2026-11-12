@@ -27,11 +27,11 @@ export function collectEvidence() {
 }
 
 export class AiService {
-  constructor(config, { fetchImpl = fetch, now = () => new Date() } = {}) {
-    this.config = config; this.fetch = fetchImpl; this.now = now; this.active = 0;
-    this.ledger = null;
+  constructor(config, { fetchImpl = fetch, now = () => new Date(), accounting } = {}) {
+    this.config = config; this.fetch = fetchImpl; this.now = now;
+    this.accounting = accounting || { active: 0, ledger: null };
     // Unknown/corrupt accounting fails closed; disabled AI never needs a state file.
-    if (config.aiEnabled) {
+    if (!accounting) {
       try {
         if (fs.existsSync(config.stateFile)) {
           this.ledger = JSON.parse(fs.readFileSync(config.stateFile, 'utf8'));
@@ -39,6 +39,15 @@ export class AiService {
         } else this.ledger = { day: this.day(), requests: 0, cost: 0 };
       } catch { this.ledger = null; }
     }
+  }
+  get active() { return this.accounting.active; }
+  set active(value) { this.accounting.active = value; }
+  get ledger() { return this.accounting.ledger; }
+  set ledger(value) { this.accounting.ledger = value; }
+  withConfig(config) { return new AiService(config, { fetchImpl: this.fetch, now: this.now, accounting: this.accounting }); }
+  usage() {
+    return { day: this.day(), requests: this.ledger?.day === this.day() ? this.ledger.requests : 0,
+      costUsd: !this.ledger ? null : this.ledger.day === this.day() ? this.ledger.cost : 0, active: this.active, accountingAvailable: !!this.ledger };
   }
   day() { return this.now().toISOString().slice(0, 10); }
   save() {

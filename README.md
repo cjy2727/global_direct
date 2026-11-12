@@ -1,7 +1,7 @@
 # GlobalDirect URL Analysis API
 
 상품 URL을 받아 기존 global_shopping 상품 API 또는 Playwright의 결과 JSON을 반환합니다.
-웹 화면, 회원, 세션, 장바구니, 주문, MySQL, Redis를 사용하지 않습니다. 작업 대기열·캐시는 메모리에서 관리하며 AI 사용량만 별도 볼륨에 보존합니다.
+상품 분석 API와 운영자 설정 화면을 제공합니다. 일반 사용자 회원·장바구니·주문·MySQL·Redis는 사용하지 않습니다. 운영자 인증 세션은 메모리에, 설정·인증정보·AI 사용량은 공개 경로 밖의 파일에 보존합니다.
 
 ## 실행
 
@@ -70,7 +70,7 @@ CORS는 브라우저 접근 제어이며 API 인증 기능은 아닙니다. 비�
 
 ## AI와 공개 서비스 설정
 
-`.env.example`을 참고해 서버의 `.env`에 설정합니다. 실제 키는 Git·브라우저·공개 로그에 넣지 않습니다. ChatGPT 구독 로그인 대신 별도 OpenAI API 키와 이용 가능한 크레딧이 필요합니다. 이 프로젝트는 구독 계정을 브라우저 자동화로 사용하지 않습니다.
+`.env.example`의 환경변수는 초기값입니다. 운영자 페이지에 저장한 항목이 환경변수보다 우선하며, 키를 제외한 실제 적용값을 페이지에서 확인할 수 있습니다. 실제 키는 Git·브라우저·공개 로그에 넣지 않습니다. ChatGPT 구독 로그인 대신 별도 OpenAI API 키와 이용 가능한 크레딧이 필요합니다. 이 프로젝트는 구독 계정을 브라우저 자동화로 사용하지 않습니다.
 
     AI_ENABLED=true
     AI_PROVIDER=openai
@@ -84,7 +84,21 @@ CORS는 브라우저 접근 제어이며 API 인증 기능은 아닙니다. 비�
 
 `AI_ENABLED=false`가 기본값입니다. 미사용 시 외부 AI 호출 없이 기존 수집과 옵션 입력 대체만 수행합니다. 처리 순서는 운영 Global Shopping API 우선 → 기존 Playwright 분석 → 부족 시 AI Chromium 탐색입니다. 내부 API 결과는 AI로 보완하지 않습니다. AI는 현재 페이지를 읽고 스크롤·상세 펼치기·옵션 선택·변경 대기를 결정하며, Chromium 실행 결과를 다시 받아 분석합니다. 텍스트 입력 옵션도 수집하고 명시된 가격·재고·필수 여부·비활성 상태를 전달합니다. 임의 코드 실행·입력값 채우기·장바구니·주문·결제·페이지 이동은 제공하지 않습니다. DOM 입력값·쿠키·헤더·스크립트는 AI 자료에서 제외합니다. 실제 이미지 내용/스크린샷 해석은 포함하지 않습니다.
 
-설정을 변경한 뒤 `docker compose up -d`로 컨테이너를 재생성합니다. 개발 시 소스는 읽기 전용 마운트로 반영되며, 배포 이미지 반출 시에는 다시 빌드합니다.
+운영자 페이지의 일반 설정은 저장 즉시 새 작업부터 적용하며 재시작하지 않습니다. 환경변수·관리자 접속 주소·저장 경로 등 시작 설정을 바꾸면 로컬에서는 `docker compose up -d`, 직접 설치 서버에서는 Node 프로세스 재시작이 필요합니다. 개발 시 소스는 읽기 전용 마운트로 반영됩니다. 운영 서버 직접 설치 방법은 [운영 안내](docs/OPERATIONS.md)를 참고하세요.
+
+### 운영자 페이지
+
+로컬 접속 주소는 **http://localhost:8080** 입니다. Docker 포트는 호스트의 `127.0.0.1`에만 공개합니다. 최초 한 번 아래 명령을 대화형 터미널에서 실행해 운영자 ID와 비밀번호(12자 이상)를 지정합니다.
+
+    docker compose exec globaldirect node admin-setup.js
+
+기본 비밀번호는 없으며 입력한 비밀번호는 표시·로그 출력하지 않습니다. 등록 후 페이지를 새로고침하고 로그인하세요. 이미 있는 인증 파일은 덮어쓰지 않습니다. 실제 `.env`와 기존 API 키는 수정하지 않습니다.
+
+운영자 페이지에서 AI 설정·단가·운영 제한을 변경하고 실행/대기 작업, 오늘 호출 수·예상 비용, 최근 실패 사유와 변경 기록을 확인할 수 있습니다. API 키를 비워 저장하면 유지하고, 별도 삭제 체크박스로만 해제합니다. 키는 AES-256-GCM으로 저장하며 다시 표시하지 않습니다. 기존 환경변수 키는 해당 환경변수에 남아 있고, 관리 화면에서 입력한 새 키만 암호화 파일에 저장됩니다.
+
+설정은 `/app/state/settings.json`, 인증정보와 암호화 키는 `/app/state/admin-auth.json`, AI 회계는 `/app/state/ai-usage.json`에 보존합니다. 세 파일은 공개 웹 경로 밖에 있으며 `analysis-state` 볼륨을 공유합니다. 인증 파일과 설정 파일을 함께 보호·백업해야 저장된 키를 복구할 수 있습니다. 파일 손상 시 초기화하거나 덮어쓰지 않습니다.
+
+실행 중인 작업은 시작 당시 설정으로 완료하고 대기 작업은 실행 시작 때 최신 설정을 받습니다. 대기 만료 시간은 등록 당시 설정입니다. 동시 실행 수를 낮춰도 기존 작업을 강제 종료하지 않습니다. 설정 버전이 다르면 캐시와 진행 중 작업을 공유하지 않으며, 변경 전 작업의 결과를 새 설정의 캐시로 저장하지 않습니다. 설정 변경으로 사용량 집계는 초기화되지 않습니다.
 
 | 설정 | 기본값 | 허용 범위 / 의미 |
 | --- | --- | --- |
@@ -155,6 +169,7 @@ Worker의 URL 검사, 내부 네트워크 차단, 토큰 검증, 추출 로직�
 로그인 요구, 자동화 차단, 사이트 구조에 따라 정보가 누락될 수 있습니다.
 
     docker compose exec -T globaldirect node /app/tests/ai-jobs.test.js
+    docker compose exec -T globaldirect node /app/tests/admin.test.js
     docker compose exec -T globaldirect node /app/tests/ai-browser.test.js
     docker compose exec -T globaldirect node /app/tests/global-shopping.test.js
     docker compose exec -T globaldirect php /var/www/html/tests/AnalysisApiTest.php

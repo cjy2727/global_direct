@@ -14,11 +14,22 @@ export function productKey(raw) {
 
 /** One process owns scheduling, cache and accounting. Job IDs are unguessable bearer capabilities. */
 export class JobManager {
-  constructor(config, analyze) {
+  constructor(config, analyze, settingsProvider = null) {
     this.c = config; this.analyze = analyze; this.running = 0;
+    this.settingsProvider = settingsProvider; this.recentFailures = [];
     this.jobs = new Map(); this.inflight = new Map(); this.cache = new Map(); this.rates = new Map(); this.queue = [];
   }
+  refresh() { if (this.settingsProvider) this.c = this.settingsProvider(); }
+  stats() {
+    return { running: this.running, queued: this.queue.length, cached: this.cache.size,
+      recentFailures: this.recentFailures.slice(-20).reverse() };
+  }
+  drain() {
+    this.refresh();
+    while (this.running < this.c.concurrency && this.queue.length) void this.run(this.queue.shift());
+  }
   rate(identity, poll = false) {
+    this.refresh();
     if (!this.c.rateEnabled) return;
     const now = Date.now();
     for (const [key, value] of this.rates) if (value.until <= now) this.rates.delete(key);
@@ -43,13 +54,14 @@ export class JobManager {
   submit(raw, identity = {}) {
     this.rate(identity); this.cleanup();
     let key;
-    try { key = productKey(raw); } catch { throw new ServiceError('invalid_url', '올바른 상품 URL을 입력해 주세요.'); }
+    let url;
+    try { url = productKey(raw); key = `${this.c.revision || 0}:${url}`; } catch { throw new ServiceError('invalid_url', '올바른 상품 URL을 입력해 주세요.'); }
     const existing = this.inflight.get(key);
     if (existing) return this.jobs.get(existing);
     const cached = this.c.cacheEnabled && this.cache.get(key);
     if (!cached && this.running >= this.c.concurrency && this.queue.length >= this.c.queueMax) throw new ServiceError('queue_full', '분석 대기열이 가득 찼습니다. 잠시 후 다시 요청해 주세요.', 503);
     if (this.jobs.size >= this.c.retainedMax) throw new ServiceError('job_capacity', '분석 작업이 많습니다. 잠시 후 다시 요청해 주세요.', 503);
-    const job = { id: randomBytes(24).toString('hex'), key, state: 'queued', created: Date.now() };
+    const job = { id: randomBytes(24).toString('hex'), key, url, settingsRevision: this.c.revision || 0, state: 'queued', created: Date.now() };
     job.promise = new Promise(resolve => { job.resolve = resolve; });
     this.jobs.set(job.id, job);
     if (cached) {
@@ -69,32 +81,37 @@ export class JobManager {
   }
   fail(job, error) {
     job.state = 'failed'; job.error = { code: error.code || 'analysis_failed', message: error.message || '상품 분석 실패', status: error.status || 422 };
+    this.recentFailures.push({ at: new Date().toISOString(), stage: 'analysis', code: job.error.code }); this.recentFailures = this.recentFailures.slice(-20);
     this.finish(job);
   }
   finish(job) {
     clearTimeout(job.waitTimer); job.finished = Date.now(); this.inflight.delete(job.key); job.resolve(job);
   }
   async run(job) {
+    this.refresh();
+    const config = { ...this.c };
     clearTimeout(job.waitTimer); this.running++; job.state = 'running';
     const controller = new AbortController();
     let timer;
     try {
       const timeout = new Promise((_, reject) => { timer = setTimeout(() => {
         controller.abort(); reject(new ServiceError('analysis_timeout', '상품 분석 시간이 초과되었습니다.', 504));
-      }, this.c.timeout); });
-      const task = Promise.resolve().then(() => this.analyze(job.key, controller.signal));
+      }, config.timeout); });
+      const task = Promise.resolve().then(() => this.analyze(job.url, controller.signal, config));
       // The analyzer closes its browser on cancellation; do not release a slot until it settles.
       let product;
       try { product = await Promise.race([task, timeout]); }
       catch (error) { await task.catch(() => {}); throw error; }
       job.product = { ...product, checkedAt: new Date().toISOString(), cacheAnalysis: { hit: false } };
       job.state = 'completed';
-      if (this.c.cacheEnabled) this.cache.set(job.key, { product: structuredClone(job.product), expires: Date.now() + this.c.cacheTtl });
+      if (['failed', 'partial'].includes(product.aiAnalysis?.status)) { this.recentFailures.push({ at: new Date().toISOString(), stage: 'ai', code: product.aiAnalysis.reason || 'incomplete' }); this.recentFailures = this.recentFailures.slice(-20); }
+      this.refresh();
+      if (config.cacheEnabled && (config.revision || 0) === (this.c.revision || 0) && job.settingsRevision === (config.revision || 0)) this.cache.set(job.key, { product: structuredClone(job.product), expires: Date.now() + config.cacheTtl });
       this.finish(job);
     } catch (error) { this.fail(job, error); }
     finally {
       clearTimeout(timer); this.running--; this.cleanup();
-      const next = this.queue.shift(); if (next) void this.run(next);
+      this.drain();
     }
   }
   get(id, identity = {}) {
