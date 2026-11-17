@@ -8,6 +8,8 @@ export function extractProductOptions({ html = null } = {}) {
   const groups = [];
   const seen = new Map();
   const isRakuten = /(^|\.)rakuten\.co\.jp$/i.test(location.hostname);
+  const isBlogpay = location.hostname.endsWith('.shop.blogpay.co.kr');
+  const isBlogpayOption = control => isBlogpay && control.matches('select[optionType],input[optionType="ioOption"]');
   const number = (value) => value !== null && String(value).trim() !== '' && Number.isFinite(Number(String(value).replace(/,/g, ''))) ? Number(String(value).replace(/,/g, '')) : null;
   const labelText = (label) => {
     if (!label) return '';
@@ -15,12 +17,12 @@ export function extractProductOptions({ html = null } = {}) {
     copy.querySelectorAll('select, input, textarea, button').forEach((node) => node.remove());
     return clean(copy.textContent);
   };
-  const nameOf = (control) => clean(control.getAttribute('label') || labelText(control.labels?.[0])
+  const nameOf = (control) => clean((isBlogpayOption(control) ? control.getAttribute('optionTitle') : '') || control.getAttribute('label') || labelText(control.labels?.[0])
     || control.getAttribute('aria-label') || root.getElementById?.(control.getAttribute('aria-labelledby'))?.textContent
     || control.closest('fieldset')?.querySelector('legend')?.textContent
     || control.closest('dl')?.querySelector('dt')?.textContent
     || control.closest('tr')?.querySelector('th, .label')?.textContent || control.name);
-  const eligible = (control) => !control.closest(excluded) && (control.matches(explicit)
+  const eligible = (control) => !control.closest(excluded) && (control.matches(explicit) || isBlogpayOption(control)
     || control.closest(scope) || control.matches('select[itemprop="color"], select[itemprop="size"]')
     || /^(?:options?\[|attribute_|radioGroup-|color$|colour$|size$)/i.test(control.name || control.id || ''));
   const add = (control, type, sourceId, name, choices = []) => {
@@ -41,10 +43,18 @@ export function extractProductOptions({ html = null } = {}) {
       source: 'dom', control: control.tagName === 'SELECT' ? 'select' : control.type === 'radio' ? 'radio' : type,
       sourceId: clean(control.id), sourceName: clean(control.name), sourceOptionId: clean(control.getAttribute('opt_id')), unavailable: !!control.disabled };
     if (control.matches(explicit)) group.required = control.required || control.getAttribute('require') === 'Y' || control.getAttribute('opt_mandatory') === 'Y';
+    if (isBlogpayOption(control)) {
+      group.required = control.required || control.matches('.optionRequire,.optionRequireInput');
+      group.isAdditional = control.matches('.optionAdditional');
+      // Blogpay locks dependent controls until preceding options are selected.
+      // That DOM lock does not establish that the option itself is unavailable.
+      group.pendingSelection = !!control.disabled && control.matches('.optionRequire,.optionRequireInput');
+      if (group.pendingSelection) group.unavailable = false;
+    }
     groups.push(group);
     seen.set(id, group);
   };
-  for (const control of root.querySelectorAll('select, input[type="radio"], input[name="optionlist[]"][opt_id]')) {
+  for (const control of root.querySelectorAll('select, input[type="radio"], input[name="optionlist[]"][opt_id],input[optionType="ioOption"]')) {
     if (!eligible(control) || control.type === 'hidden') continue;
     // Shopify 상품 폼의 id 필드는 색상/크기가 아니라 최종 변형 ID이다.
     if (control.matches('select[name="id"]') && control.closest('form[action*="/cart/add"], product-form')) continue;
@@ -52,7 +62,7 @@ export function extractProductOptions({ html = null } = {}) {
     const sourceId = clean(control.getAttribute('opt_id') || (control.type === 'radio' ? control.name : control.id || control.name) || name);
     if (control.tagName === 'SELECT') {
       const values = [...control.options].filter((option) => option.value !== '' && !/^(?:\*+|[-–]+|옵션\s*선택|선택해|choose\b|select\b|選択)/i.test(clean(option.textContent))).slice(0, 200).map((option) => ({
-        id: String(option.value), label: clean(option.textContent),
+        id: String(option.value), label: clean(isBlogpayOption(control) ? option.getAttribute('title') || option.textContent : option.textContent),
         priceDelta: number(option.getAttribute('data-price-delta') ?? option.getAttribute('price')),
         disabled: option.disabled || /품절|sold\s*out|out of stock|売り切れ|在庫なし/i.test(option.textContent),
       }));
@@ -64,7 +74,7 @@ export function extractProductOptions({ html = null } = {}) {
       const label = isRakuten ? ({ normal: '일반 구매', subscription: '정기 구매' }[rawLabel.toLowerCase()] || rawLabel) : rawLabel;
       add(control, 'select', sourceId, groupName, [{ id: control.value, label,
         priceDelta: number(control.getAttribute('data-price-delta')), disabled: control.disabled }]);
-    } else if (['text', 'email', 'tel'].includes(control.type) && !control.disabled) {
+    } else if (['text', 'email', 'tel'].includes(control.type) && (!control.disabled || isBlogpayOption(control))) {
       add(control, 'text', sourceId, name);
     }
   }

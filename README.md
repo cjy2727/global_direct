@@ -5,6 +5,9 @@
 
 ## 실행
 
+Windows 호스트의 Docker는 개발 환경이며, 운영은 Linux 서버의 Docker 환경을 기준으로 합니다.
+모든 상점의 상품 분석은 컨테이너 내부에서 수행하며 Windows 전용 브라우저나 보조 수집기에 의존하지 않습니다.
+
     docker compose up --build -d
     docker compose ps
 
@@ -176,6 +179,15 @@ Worker의 URL 검사, 내부 네트워크 차단, 토큰 검증, 추출 로직�
     docker compose exec -T globaldirect node /app/tests/product-content.test.js
     docker compose exec -T globaldirect node /app/tests/product-options.test.js
     docker compose exec -T globaldirect node /app/tests/option-collection.test.js
+    docker compose exec -T globaldirect node /app/tests/shopping-options.test.js
+    docker compose exec -T globaldirect node /app/tests/blogpay-options.test.js
+    docker compose exec -T globaldirect node /app/tests/product-availability.test.js
+
+`makeshop-view.test.js`는 외부 호출 측의 `request_ai.ctp`를 검증하는 통합 테스트입니다.
+검증 대상 템플릿을 컨테이너에 읽기 전용으로 마운트하고 `REQUEST_AI_TEMPLATE`에
+컨테이너 내부 경로를 지정한 경우에만 별도로 실행합니다. 기본 Compose에는 해당 템플릿이 없습니다.
+
+    docker compose exec -T -e REQUEST_AI_TEMPLATE=/path/to/request_ai.ctp globaldirect node /app/tests/makeshop-view.test.js
 
 네트워크 수집 테스트는 비식별 로컬 HTML/API fixture를 사용합니다. HTTP API 테스트는
 로컬 worker 응답 fixture로 HTTP 계약을 검증합니다. 실제 상점 정확성 검증과 다릅니다.

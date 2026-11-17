@@ -55,7 +55,7 @@ export class JobManager {
     this.rate(identity); this.cleanup();
     let key;
     let url;
-    try { url = productKey(raw); key = `${this.c.revision || 0}:${url}`; } catch { throw new ServiceError('invalid_url', '올바른 상품 URL을 입력해 주세요.'); }
+    try { key = `${this.c.revision || 0}:${productKey(raw)}`; url = raw; } catch { throw new ServiceError('invalid_url', '올바른 상품 URL을 입력해 주세요.'); }
     const existing = this.inflight.get(key);
     if (existing) return this.jobs.get(existing);
     const cached = this.c.cacheEnabled && this.cache.get(key);

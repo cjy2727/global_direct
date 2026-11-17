@@ -56,8 +56,9 @@ try {
   const slow = new AiService({ ...enabledConfig, stateFile: path.join(dir, 'slow.json'), aiTimeout: 10 }, { fetchImpl: async (_, init) => new Promise((resolve, reject) => init.signal.addEventListener('abort', () => reject(new Error('cancel')))) });
   assert.equal((await slow.enrich(product, evidence)).aiAnalysis.reason, 'timeout_or_cancelled');
 
-  let release; let executions = 0;
-  const jobs = new JobManager({ ...config, rateEnabled: false, queueMax: 1 }, async () => {
+  let release; let executions = 0; const receivedUrls = [];
+  const jobs = new JobManager({ ...config, rateEnabled: false, queueMax: 1 }, async url => {
+    receivedUrls.push(url);
     executions++; if (executions === 1) await new Promise(resolve => { release = resolve; }); return product;
   });
   const first = jobs.submit('https://example.test/item?utm_source=test');
@@ -67,6 +68,7 @@ try {
   await new Promise(resolve => setImmediate(resolve)); release();
   await Promise.all([first.promise, second.promise]);
   assert.equal(executions, 2); assert.equal(first.state, 'completed');
+  assert.equal(receivedUrls[0], 'https://example.test/item?utm_source=test');
   const cached = jobs.submit('https://example.test/item'); assert.equal(cached.product.cacheAnalysis.hit, true);
   const rate = new JobManager({ ...config, perIp: 1 }, async () => product);
   rate.submit('https://example.test/a', { ip: 'fixture' });

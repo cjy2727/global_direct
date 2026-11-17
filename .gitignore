@@ -3,6 +3,7 @@ AGENTS.md
 .vscode/
 vendor/
 node_modules/
+.runtime/
 *.log
 *.tar
 .env

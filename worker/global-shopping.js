@@ -1,3 +1,8 @@
+import { normalizeApiOptions } from './shopping-options.js';
+import { applyOptionFallback } from './option-fallback.js';
+
+const isAdditionalProduct = item => item && ['add', 'addition'].includes(item.opt_type) && typeof item.product_name === 'string';
+
 /** Only the existing production widget's own product requests are observed. */
 const hosts = new Set(['app.malltail.com', 'app2.malltail.com']);
 export function watchShoppingResponses(page) {
@@ -81,8 +86,8 @@ export async function readShoppingProduct(page, capture, sourceUrl, { timeout = 
             candidate = found;
             addition.status = 'complete';
             delete addition.reason;
-            const returned = new Set(found.products.slice(1).filter(item => item?.opt_type === 'add' && typeof item.product_name === 'string').map(item => String(item.uid)));
-            if (composition.some(item => !returned.has(String(item.uid)))) {
+            const returned = new Set(found.products.slice(1).filter(isAdditionalProduct).map(item => String(item.uid)));
+            if (!returned.size || composition.some(item => !returned.has(String(item.uid)))) {
               addition.status = 'partial';
               addition.reason = 'incomplete_products';
             }
@@ -109,6 +114,10 @@ export async function readShoppingProduct(page, capture, sourceUrl, { timeout = 
       } catch { addition.reason = 'widget_error'; }
     }
     const product = normalizeShoppingProduct(candidate, sourceUrl, page.url());
+    if (product.additionalProducts.length && addition.status === 'none') addition.status = 'complete';
+    if (product.additionalProducts.some(item => item.optionAnalysis.status === 'partial')) {
+      addition.status = 'partial'; addition.reason = 'incomplete_options';
+    }
     product.additionAnalysis = addition;
     if (addition.status === 'partial') product.status = 'needs_review';
     if (product.productContent) {
@@ -210,30 +219,18 @@ export function normalizeShoppingProduct(candidate, sourceUrl, finalUrl) {
   const absolute = value => {
     try { const url = new URL(value, finalUrl); return /^https?:$/.test(url.protocol) ? url.href : null; } catch { return null; }
   };
-  const groups = [];
-  let partial = !Array.isArray(p.options?.option);
-  for (const option of p.options?.option || []) {
-    if (option.opt_use !== 'Y' || option.opt_type === 'HIDDEN') continue;
-    const text = ['CUSTOM', 'TEL', 'TEXT', 'EMAIL'].includes(option.opt_type);
-    const prices = String(option.opt_price ?? '').split(',');
-    const values = text ? [] : String(option.opt_value ?? '').split(',').map((label, index) => ({
-      id: String(index), label: label.trim(), priceDelta: number(prices[index]), disabled: false,
-    })).filter(value => value.label);
-    const mixed = option.opt_mix === 'Y';
-    partial ||= mixed || !text && !values.length;
-    groups.push({ id: `option-${option.opt_id ?? groups.length}`, name: option.opt_name || '',
-      type: text ? 'text' : 'select', required: option.opt_mandatory === 'Y', values,
-      inputType: option.opt_type === 'TEL' ? 'tel' : option.opt_type === 'EMAIL' ? 'email' : 'text',
-      isCombination: mixed, source: 'global_shopping' });
-  }
+  const normalized = normalizeApiOptions(p.options);
+  const groups = normalized.groups;
+  const partial = normalized.status === 'partial';
   const price = number(p.sellprice);
   const soldout = !!p.soldout && p.soldout !== 'N' || p.sell_accept === 'N' || p.display === 'N'
     || number(p.quantity) !== null && number(p.quantity) <= 0;
-  const additionalProducts = candidate.products.slice(1).filter(item => item && item.opt_type === 'add' && typeof item.product_name === 'string').map(item => ({
-    ...normalizeShoppingProduct({ ...candidate, products: [item] }, sourceUrl, finalUrl),
+  const additionalProducts = candidate.products.slice(1).filter(isAdditionalProduct).map(item => ({
+    ...applyOptionFallback(normalizeShoppingProduct({ ...candidate, products: [item] }, sourceUrl, finalUrl)),
     uid: String(item.uid), required: item.required === 'Y',
   }));
-  return { title: p.product_name, price, currency: 'KRW', additionalProducts,
+  const additionTitle = p.opt_type === 'addition' ? groups.map(group => group.name).filter(Boolean).join(' / ') : '';
+  return { title: additionTitle || p.product_name, price, currency: 'KRW', additionalProducts,
     images: [...new Set([p.maximage, p.minimage, p.tinyimage].filter(Boolean).map(absolute).filter(Boolean))],
     description: '', content: { blocks: [] },
     // Preserve the exact API detail HTML and all stock/basic-option data for callers.
