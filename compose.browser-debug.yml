@@ -1,0 +1,29 @@
+name: globaldirect-browser-debug
+
+services:
+  browser-debug:
+    hostname: browser-debug
+    build:
+      context: ./docker/browser-debug
+    ports:
+      - "127.0.0.1:6080:6080"
+    environment:
+      DISPLAY: ":99"
+      TZ: Asia/Seoul
+    volumes:
+      - browser-profile:/home/pwuser/browser-profile
+      - ./worker/diagnose-browser.mjs:/opt/product-diagnostics/diagnose-browser.mjs:ro
+      - ./worker/public-url.js:/opt/product-diagnostics/public-url.js:ro
+    shm_size: "1gb"
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import pathlib,urllib.request; urllib.request.urlopen('http://127.0.0.1:6080/vnc.html', timeout=3); names={p.read_text().strip() for p in pathlib.Path('/proc').glob('[0-9]*/comm') if p.exists()}; assert {'chrome','fcitx5','x11vnc'} <= names"]
+      interval: 10s
+      timeout: 8s
+      retries: 6
+      start_period: 20s
+
+volumes:
+  browser-profile:
