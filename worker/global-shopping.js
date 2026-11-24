@@ -4,7 +4,8 @@ import { applyOptionFallback } from './option-fallback.js';
 const isAdditionalProduct = item => item && ['add', 'addition'].includes(item.opt_type) && typeof item.product_name === 'string';
 
 /** Only the existing production widget's own product requests are observed. */
-const hosts = new Set(['app.malltail.com', 'app2.malltail.com']);
+const hostList = ['app.malltail.com', 'app2.malltail.com'];
+const hosts = new Set(hostList);
 export function watchShoppingResponses(page) {
   const candidates = [];
   const pending = new Set();
@@ -60,7 +61,7 @@ export function watchShoppingResponses(page) {
 }
 
 /** Bounded initialization, consent, and read-only fetchProduct; never a cart-add action. */
-export async function readShoppingProduct(page, capture, sourceUrl, { timeout = 12000, diagnostics = {} } = {}) {
+export async function readShoppingProduct(page, capture, sourceUrl, { timeout = 12000, additionTimeout = 15000, diagnostics = {} } = {}) {
   const started = Date.now();
   Object.assign(diagnostics, { status: 'pending', stage: 'discover', attempts: 0, requestCount: 0 });
   const fallback = reason => {
@@ -76,7 +77,8 @@ export async function readShoppingProduct(page, capture, sourceUrl, { timeout = 
     if (composition.length || base.addition_exist === true || base.addition_exist === 'Y' || base.is_add_composition === true || base.is_add_composition === 'Y') {
       addition.status = 'partial';
       addition.reason = 'response_timeout';
-      const until = Math.min(deadline, Date.now() + 5000);
+      // Give additional products their own bounded response window.
+      const until = Date.now() + additionTimeout;
       let lastCall = 0;
       let attempts = 0;
       try {
@@ -96,16 +98,16 @@ export async function readShoppingProduct(page, capture, sourceUrl, { timeout = 
           const state = capture.state(candidate.uid, 'product.addition');
           if (state.failure) { addition.reason = state.failure; break; }
           if (!state.count && attempts < 3 && Date.now() - lastCall >= 500) {
-            const invoked = await page.evaluate(({ uid, products }) => {
+            const invoked = await page.evaluate(({ uid, products, hostList }) => {
               const mt = window.__MT__;
-              if (!mt || !['app.malltail.com', 'app2.malltail.com'].includes(mt.scriptHost)
+              if (!mt || !hostList.includes(mt.scriptHost)
                 || String(mt.UID || '') !== uid || mt.isRequestInProgress) return 'busy';
               if (typeof mt.fetchProductAddition !== 'function') return 'missing';
               // The existing widget sends its current productInfo with the addition query.
               mt.pifo = products;
               void Promise.resolve(mt.fetchProductAddition()).catch(() => {});
               return 'called';
-            }, { uid: candidate.uid, products: candidate.products });
+            }, { uid: candidate.uid, products: candidate.products, hostList });
             if (invoked === 'missing') { addition.reason = 'function_missing'; break; }
             if (invoked === 'called') { attempts++; lastCall = Date.now(); }
           }
@@ -141,24 +143,24 @@ export async function readShoppingProduct(page, capture, sourceUrl, { timeout = 
   };
   try {
     // Allow asynchronously inserted widgets a short opportunity to appear.
-    await page.waitForFunction(() => !!window.__MT__ || [...document.scripts].some(script => {
-      try { const u = new URL(script.src); return ['app.malltail.com', 'app2.malltail.com'].includes(u.hostname) && u.pathname.startsWith('/global_shopping/'); } catch { return false; }
-    }), null, { timeout: Math.min(1500, remaining()) }).catch(() => {});
+    await page.waitForFunction(hostList => !!window.__MT__ || [...document.scripts].some(script => {
+      try { const u = new URL(script.src); return hostList.includes(u.hostname) && u.pathname.startsWith('/global_shopping/'); } catch { return false; }
+    }), hostList, { timeout: Math.min(1500, remaining()) }).catch(() => {});
     // No store/platform registry: discover the installed production widget from the page.
-    const installed = await page.locator('script[src]').evaluateAll(scripts => scripts.some(script => {
+    const installed = await page.locator('script[src]').evaluateAll((scripts, hostList) => scripts.some(script => {
       try {
         const url = new URL(script.src);
-        return ['app.malltail.com', 'app2.malltail.com'].includes(url.hostname)
+        return hostList.includes(url.hostname)
           && /^\/global_shopping\/(?:js\/)?script(?:-min)?\.(?:js|php)$/.test(url.pathname);
       } catch { return false; }
-    }));
+    }), hostList);
     if (!installed && !await page.evaluate(() => !!window.__MT__)) {
       const observed = await capture.find('', page.url());
       return observed ? await convert(observed) : fallback('widget_not_found');
     }
     diagnostics.stage = 'widget_ready';
-    await page.waitForFunction(() => typeof window.__MT__?.fetchProduct === 'function'
-      && ['app.malltail.com', 'app2.malltail.com'].includes(window.__MT__?.scriptHost), null, { timeout: remaining() });
+    await page.waitForFunction(hostList => typeof window.__MT__?.fetchProduct === 'function'
+      && hostList.includes(window.__MT__?.scriptHost), hostList, { timeout: remaining() });
     const consent = await page.evaluate(() => window.__MT__?.isCookieConsent?.() === true);
     if (!consent) {
       diagnostics.stage = 'cookie_consent';
@@ -174,12 +176,12 @@ export async function readShoppingProduct(page, capture, sourceUrl, { timeout = 
       && typeof window.__MT__?.fetchProduct === 'function',
     null, { timeout: remaining() });
     diagnostics.stage = 'product_uid';
-    const uid = await page.evaluate(() => {
+    const uid = await page.evaluate(hostList => {
       const mt = window.__MT__;
-      if (!['app.malltail.com', 'app2.malltail.com'].includes(mt.scriptHost)) return '';
+      if (!hostList.includes(mt.scriptHost)) return '';
       if (typeof mt.detectedUIDExtend === 'function') mt.detectedUIDExtend();
       return String(mt.UID || '');
-    });
+    }, hostList);
     if (!uid) return fallback('product_uid_missing');
     let candidate = await capture.find(uid, page.url());
     if (!candidate) {
@@ -194,13 +196,13 @@ export async function readShoppingProduct(page, capture, sourceUrl, { timeout = 
         if (!state.count && Date.now() - lastInvocation >= 500 && diagnostics.attempts < 3) {
           // The readiness check and call must occur in the same browser task.
           // A busy widget silently skips fetchProduct(), so retry only while no request was sent.
-          const invoked = await page.evaluate(expectedUid => {
+          const invoked = await page.evaluate(({ expectedUid, hostList }) => {
             const mt = window.__MT__;
-            if (!mt || !['app.malltail.com', 'app2.malltail.com'].includes(mt.scriptHost)
+            if (!mt || !hostList.includes(mt.scriptHost)
               || String(mt.UID || '') !== expectedUid || mt.isRequestInProgress) return false;
             void Promise.resolve(mt.fetchProduct()).catch(() => {});
             return true;
-          }, uid);
+          }, { expectedUid: uid, hostList });
           if (invoked) { diagnostics.attempts++; lastInvocation = Date.now(); }
         }
         await page.waitForTimeout(Math.min(100, remaining()));

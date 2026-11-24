@@ -32,7 +32,7 @@ assert.equal(emitter.listenerCount('response'), 0);
 
 const browser = await chromium.launch({ headless: true });
 try {
-  for (const mode of ['success', 'detail', 'additions', 'addition-error', 'busy-race', 'skipped-call', 'always-busy', 'error', 'absent']) {
+  for (const mode of ['success', 'detail', 'additions', 'addition-delayed', 'addition-timeout', 'addition-error', 'busy-race', 'skipped-call', 'always-busy', 'error', 'absent']) {
     const context = await browser.newContext({ locale: 'en-US' });
     const page = await context.newPage();
     let apiCalls = 0;
@@ -54,13 +54,15 @@ try {
       if (requestUrl.pathname.endsWith('api.php')) {
         apiCalls++;
         assert.equal(requestUrl.hostname, 'app2.malltail.com');
+        if (requestUrl.searchParams.get('a') === 'product.addition' && mode === 'addition-timeout') return;
+        if (requestUrl.searchParams.get('a') === 'product.addition' && mode === 'addition-delayed') await new Promise(resolve => setTimeout(resolve, 5500));
         if (requestUrl.searchParams.get('a') === 'product.addition') return route.fulfill({ contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' },
           body: JSON.stringify({status:mode==='addition-error'?'error':'success',data:[product,
             { ...product, uid:'456', opt_type:'add', required:'N', product_name:'Fixture gift wrap', sellprice:'2000', options:{option:[{opt_id:'wrap',opt_use:'Y',opt_type:'SELECT',opt_name:'Wrap color',opt_value:'red,blue',opt_mandatory:'Y'}]} },
             { ...product, uid:'789', opt_type:'add', required:'N', product_name:'Fixture bag', sellprice:'12000' }]}) });
         return route.fulfill({ contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' },
-          body: JSON.stringify({ status: ['success', 'detail', 'additions', 'addition-error', 'busy-race', 'skipped-call'].includes(mode) ? 'success' : 'error', data: [{ ...product,
-            add_composition: ['additions','addition-error'].includes(mode)?[{uid:'456'},{uid:'789'}]:[],
+          body: JSON.stringify({ status: ['success', 'detail', 'additions', 'addition-delayed', 'addition-timeout', 'addition-error', 'busy-race', 'skipped-call'].includes(mode) ? 'success' : 'error', data: [{ ...product,
+            add_composition: ['additions','addition-delayed','addition-timeout','addition-error'].includes(mode)?[{uid:'456'},{uid:'789'}]:[],
             product_content: mode === 'detail' ? '<p>API detail only</p><img src="/detail.jpg"><script>DOM POISON</script>' : '' }] }) });
       }
       throw new Error(`Unexpected fixture request: ${requestUrl.origin}`);
@@ -68,27 +70,27 @@ try {
     const watcher = watchShoppingResponses(page);
     await page.goto(url);
     const diagnostics = {};
-    const result = await readShoppingProduct(page, watcher, url, { timeout: 1800, diagnostics });
-    if (['success', 'detail', 'additions', 'addition-error', 'busy-race', 'skipped-call'].includes(mode)) {
+    const result = await readShoppingProduct(page, watcher, url, { timeout: 1800, additionTimeout: mode === 'addition-timeout' ? 300 : 8000, diagnostics });
+    if (['success', 'detail', 'additions', 'addition-delayed', 'addition-timeout', 'addition-error', 'busy-race', 'skipped-call'].includes(mode)) {
       assert.equal(result.title, product.product_name);
       assert.equal(result.description, mode === 'detail' ? 'API detail only' : '');
       if (mode === 'detail') assert.deepEqual(result.content.blocks, [{ type: 'text', text: 'API detail only' }, { type: 'image', url: 'https://shop.example.test/detail.jpg' }]);
       else assert.deepEqual(result.content.blocks, []);
-      assert.equal(result.status, mode==='addition-error'?'needs_review':'complete');
-      assert.equal(apiCalls, ['additions','addition-error'].includes(mode)?2:1);
+      assert.equal(result.status, ['addition-error','addition-timeout'].includes(mode)?'needs_review':'complete');
+      assert.equal(apiCalls, ['additions','addition-delayed','addition-timeout','addition-error'].includes(mode)?2:1);
       assert.equal(result.shoppingAnalysis.requestCount, 1);
-      if(mode==='additions') {
+      if(['additions','addition-delayed'].includes(mode)) {
         assert.equal(result.additionalProducts.length,2);
         assert.equal(result.additionalProducts[0].price,2000);
         assert.equal(result.additionalProducts[0].required,false);
         assert.equal(result.additionalProducts[0].optionGroups[0].values.length,2);
         assert.equal(result.globalShopping.products.length,3);
         assert.equal(result.additionAnalysis.status,'complete');
-      } else if(mode==='addition-error') {
+      } else if(['addition-error','addition-timeout'].includes(mode)) {
         assert.equal(result.title,product.product_name);
         assert.equal(result.additionalProducts.length,0);
         assert.equal(result.additionAnalysis.status,'partial');
-        assert.equal(result.additionAnalysis.reason,'api_error');
+        assert.equal(result.additionAnalysis.reason,mode==='addition-timeout'?'response_timeout':'api_error');
       }
       if (mode === 'skipped-call') assert.equal(result.shoppingAnalysis.attempts, 2);
     } else {
@@ -100,5 +102,5 @@ try {
     watcher.dispose();
     await context.close();
   }
-  console.log('PASS: browser API capture, consent/reload, exact UID, production hosts, no DOM enrichment, failure/absent fallback (synthetic fixtures).');
+  console.log('PASS: browser API capture, consent/reload, exact UID, production hosts, no DOM enrichment, delayed additions, bounded addition timeout, failure/absent fallback (synthetic fixtures).');
 } finally { await browser.close(); }
