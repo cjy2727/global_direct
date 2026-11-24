@@ -30,8 +30,8 @@ const server = http.createServer(async (req, res) => {
         res.statusCode = error.status || 422;
         if ([429, 503].includes(res.statusCode)) {
             res.setHeader('Retry-After', '60');
-            res.end(JSON.stringify({ ok: false, code: error.code || 'analysis_failed', message: error.message || '상품 분석 실패' }));
         }
+        res.end(JSON.stringify({ ok: false, code: error.code || 'analysis_failed', message: error.message || '상품 분석 실패' }));
      };
     const jobId = req.url?.match(/^\/jobs\/([a-f0-9]{48})$/)?.[1];
     if (req.method === 'GET' && jobId) {

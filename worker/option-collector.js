@@ -7,11 +7,18 @@ export function watchOptionResponses(page, rawUrl) {
   const pending = new Set();
   let count = 0;
   let stopped = false;
-  const origin = new URL(rawUrl).origin;
+  const source = new URL(rawUrl);
+  const origin = source.origin;
+  const naverProductId = ['brand.naver.com', 'smartstore.naver.com'].includes(source.hostname)
+    ? source.pathname.match(/\/products\/(\d+)\/?$/)?.[1] : null;
   const listener = (response) => {
     const url = new URL(response.url());
     const headers = response.headers();
-    if (stopped || count >= 20 || url.origin !== origin || !/product|variant|option|graphql/i.test(url.pathname)
+    const sameOrigin = url.origin === origin;
+    const naverDetail = naverProductId && ['m.smartstore.naver.com', 'smartstore.naver.com'].includes(url.hostname)
+      && new RegExp(`^/i/v2/channels/[^/]+/products/${naverProductId}/?$`).test(url.pathname);
+    if (stopped || count >= 20 || !(sameOrigin || naverDetail)
+      || !/product|variant|option|graphql/i.test(url.pathname)
       || /cart|checkout|order|customer|account/i.test(url.pathname) || !/json/i.test(headers['content-type'] || '')
       || Number(headers['content-length'] || 0) > 1024 * 1024) return;
     count++;
@@ -23,6 +30,10 @@ export function watchOptionResponses(page, rawUrl) {
   page.on('response', listener);
   return {
     payloads,
+    async wait() {
+      await Promise.race([Promise.allSettled([...pending]), new Promise((resolve) => setTimeout(resolve, 500))]);
+      return payloads;
+    },
     async finish() {
       await Promise.race([Promise.allSettled([...pending]), new Promise((resolve) => setTimeout(resolve, 500))]);
       stopped = true;

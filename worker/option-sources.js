@@ -1,3 +1,66 @@
+/** Naver 내부 상세 응답의 현재 상품 필드만 표준 상품/옵션 DTO로 정규화한다. */
+export function normalizeNaverProductData(payloads, productId) {
+  const text = value => typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
+  const finite = value => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)) ? Number(value) : null;
+  let current = null;
+  let visited = 0;
+  const visit = (node, depth = 0) => {
+    if (current || !node || typeof node !== 'object' || depth > 12 || visited++ > 20000) return;
+    if (String(node.id ?? node.productId ?? '') === String(productId)
+      && text(node.name) && (finite(node.salePrice) !== null || node.benefitsView || node.optionInfo)) { current = node; return; }
+    for (const [key, child] of Object.entries(node).slice(0, 300)) {
+      if (/customer|cart|checkout|order|account|review/i.test(key)) continue;
+      visit(child, depth + 1);
+      if (current) return;
+    }
+  };
+  for (const payload of payloads) { visit(payload); if (current) break; }
+  if (!current) return null;
+  const price = finite(current.benefitsView?.discountedSalePrice)
+    ?? finite(current.discountedSalePrice) ?? finite(current.salePrice) ?? finite(current.price);
+  const imageValues = [current.representativeImageUrl, ...(current.optionalImageUrls || []),
+    ...(Array.isArray(current.productImages) ? current.productImages.map(image => image?.url) : [])];
+  const images = [...new Set(imageValues.map(value => text(value)).filter(value => /^https?:\/\//.test(value)))].slice(0, 12);
+  const optionInfo = current.optionInfo || {};
+  const rows = Array.isArray(optionInfo.optionCombinations) ? optionInfo.optionCombinations
+    : Array.isArray(current.optionCombinations) ? current.optionCombinations : [];
+  const optionNames = Array.isArray(optionInfo.optionNames) ? optionInfo.optionNames.map(text)
+    : Array.from({ length: 10 }, (_, i) => text(optionInfo[`optionName${i + 1}`])).filter(Boolean);
+  const groups = optionNames.filter(Boolean).slice(0, 10).map((name, index) => ({
+    id: `naver-option-${index + 1}`, name, sourceName: name, type: 'select', required: true,
+    inputType: 'text', values: [], source: 'naver', priceDelta: null,
+  }));
+  const combinations = [];
+  for (const row of rows.slice(0, 1000)) {
+    const values = {};
+    groups.forEach((group, index) => {
+      const label = text(row[`optionName${index + 1}`] ?? row.optionNames?.[index] ?? row.options?.[index]);
+      if (!label) return;
+      values[group.id] = label;
+      if (!group.values.some(choice => choice.id === label)) group.values.push({ id: label, label, priceDelta: null, disabled: false });
+    });
+    if (Object.keys(values).length !== groups.length) continue;
+    const rowPrice = finite(row.price) ?? finite(row.productPrice) ?? finite(row.salePrice);
+    combinations.push({ id: text(row.id || row.optionId), values,
+      disabled: row.usable === false || row.available === false || /SOLD_OUT|OUT_OF_STOCK/i.test(text(row.stockStatus || row.status))
+        || finite(row.stockQuantity) === 0,
+      priceDelta: rowPrice !== null && price !== null ? Number((rowPrice - price).toFixed(4)) : null });
+  }
+  if (groups.length && combinations.length) {
+    for (const group of groups) for (const choice of group.values) {
+      choice.disabled = combinations.filter(row => row.values[group.id] === choice.id).every(row => row.disabled);
+    }
+    groups[0].combinationGroupIds = groups.map(group => group.id);
+    groups[0].combinations = combinations;
+    groups[0].combinationsComplete = rows.every(row => row && (typeof row.usable === 'boolean' || typeof row.available === 'boolean' || row.stockQuantity !== undefined));
+  }
+  return { title: text(current.name), price, currency: 'KRW', images,
+    description: text(current.detailContent?.description || current.description),
+    availability: current.soldOut === true || current.saleStatus === 'SUSPENSION' ? 'OutOfStock' : 'InStock',
+    optionGroups: groups.filter(group => group.values.length), optionAnalysis: { status: groups.length && groups[0].combinationsComplete ? 'complete' : groups.length ? 'partial' : 'unresolved', source: 'naver_internal' },
+    source: 'naver_internal' };
+}
+
 /** 현재 상품에 연결된 구조화 데이터만 정규화한다. 원본 응답/고객정보는 보관하지 않는다. */
 export function normalizeOptionData(payloads, identity) {
   const candidates = [];

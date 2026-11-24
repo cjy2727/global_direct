@@ -3,10 +3,46 @@ import { extractProductContent } from './product-content.js';
 import { collectOptions, waitForOptions, watchOptionResponses } from './option-collector.js';
 import { watchShoppingResponses, readShoppingProduct } from './global-shopping.js';
 import { collectEvidence } from './ai.js';
+import { normalizeNaverProductData } from './option-sources.js';
 import { applyOptionFallback } from './option-fallback.js';
 import { AiBrowser } from './ai-browser.js';
 import { ServiceError } from './jobs.js';
 import { collectProductEvidence, validateProductData } from './product-availability.js';
+
+export function watchNaverAccess(page, rawUrl) {
+    const source = new URL(rawUrl);
+    const id = source.pathname.match(/\/products\/(\d+)\/?$/)?.[1];
+    const enabled = ['brand.naver.com', 'smartstore.naver.com'].includes(source.hostname) && Boolean(id);
+    let deniedStatus = null;
+    const onResponse = response => {
+        if (!enabled || ![403, 429, 490].includes(response.status())) return;
+        try {
+            const url = new URL(response.url());
+            const request = response.request();
+            const document = request.isNavigationRequest() && request.frame() === page.mainFrame()
+                && url.origin === source.origin && url.pathname === source.pathname;
+            const match = url.pathname.match(/^\/i\/v2\/channels\/[^/]+\/products\/(\d+)\/?$/);
+            const detail = ['xhr', 'fetch'].includes(request.resourceType())
+                && ['m.smartstore.naver.com', 'smartstore.naver.com'].includes(url.hostname) && match?.[1] === id;
+            if (document || detail) {
+                // Keep a verification requirement even if another request is later denied.
+                if (deniedStatus !== 490) deniedStatus = response.status();
+            }
+        } catch { /* Ignore malformed response URLs. */ }
+    };
+    if (enabled) page.on('response', onResponse);
+    return {
+        check() {
+            if (!enabled) return;
+            let login = false;
+            try { const url = new URL(page.url()); login = url.hostname === 'nid.naver.com' && url.pathname === '/nidlogin.login'; } catch { }
+            if (deniedStatus === 490) throw new ServiceError('store_verification_required', '네이버가 보안 인증을 요구하여 상품 정보를 수집하지 못했습니다.', 422);
+            if (login) throw new ServiceError('store_login_required', '네이버가 상품 요청을 로그인 페이지로 이동시켜 비로그인 상태에서 상품 정보를 수집하지 못했습니다.', 422);
+            if (deniedStatus) throw new ServiceError('store_access_denied', '판매처에서 상품 페이지 접근을 제한했습니다. 잠시 후 다시 시도해 주세요.', 422);
+        },
+        dispose() { if (enabled) page.off('response', onResponse); }
+    };
+}
 function parsePrice(value) {
     if (value == null) return null;
     const cleaned = String(value).replace(/[^0-9.,]/g, '').replace(/,/g, '');
@@ -29,6 +65,7 @@ export function createAnalyzer({ chromium, ai }) {
         try {
             const context = await browser.newContext({ locale: 'en-US', extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' } });
             const page = await context.newPage();
+            const naverAccess = watchNaverAccess(page, rawUrl);
             const optionResponses = watchOptionResponses(page, rawUrl);
             const shoppingResponses = watchShoppingResponses(page);
             page.setDefaultTimeout(8000);
@@ -58,10 +95,25 @@ export function createAnalyzer({ chromium, ai }) {
                 const shoppingAnalysis = {};
                 const shoppingProduct = await readShoppingProduct(page, shoppingResponses, rawUrl, { diagnostics: shoppingAnalysis });
                 if (shoppingProduct) return applyOptionFallback(validateProductData({ ...shoppingProduct, aiAnalysis: { status: 'skipped', reason: config.aiEnabled ? 'internal_api' : 'disabled' } }, { identified: true }));
+                if (!isNaver) naverAccess.check();
                 console.warn(JSON.stringify({ event: 'shopping_api_fallback', ...shoppingAnalysis }));
                 // 이동 전에 응답을 읽되, 본문을 읽지 못해도 현재 DOM 분석은 계속한다.
                 const sourceHtml = await response.text().catch(() => null);
                 await waitForOptions(page);
+                if (isNaver) {
+                    const productId = new URL(rawUrl).pathname.match(/\/products\/(\d+)\/?$/)?.[1];
+                    const captured = normalizeNaverProductData(await optionResponses.wait(), productId);
+                    if (captured && captured.title && captured.price !== null) {
+                        return applyOptionFallback(validateProductData({
+                            ...captured, content: { blocks: [], status: 'unavailable' },
+                            optionGroups: captured.optionGroups, optionAnalysis: captured.optionAnalysis,
+                            sourceUrl: rawUrl, finalUrl: page.url(), canonicalUrl: page.url(), shoppingAnalysis,
+                            status: captured.optionGroups.length && captured.optionAnalysis.status !== 'complete' ? 'needs_review' : 'complete',
+                            aiAnalysis: { status: 'skipped', reason: config.aiEnabled ? 'internal_api' : 'disabled' }
+                        }, { identified: true }));
+                    }
+                }
+                naverAccess.check();
                 const result = await page.evaluate(() => {
                     const text = (value) => typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
                     const products = [];
@@ -166,6 +218,7 @@ export function createAnalyzer({ chromium, ai }) {
                 const price = parsePrice(result.price);
                 const currency = String(result.currency || 'UNKNOWN').trim().toUpperCase();
                 const options = await collectOptions(page, { sourceHtml, responses: optionResponses, identity: { url: page.url(), title: result.title, price, currency } });
+                naverAccess.check();
                 const productEvidence = await page.evaluate(collectProductEvidence, {
                     structuredProduct, sourceUrl: rawUrl,
                     collectedProduct: { ...result, ...content, price, optionGroups: options.groups }
@@ -178,8 +231,10 @@ export function createAnalyzer({ chromium, ai }) {
                 const evidence = await page.evaluate(collectEvidence);
                 // Keep public DOM option names even when the generic option collector cannot interpret a control.
                 const enriched = await jobAi.browse(product, new AiBrowser(page, { signal }), signal);
+                naverAccess.check();
                 return applyOptionFallback(validateProductData(enriched, productEvidence), evidence);
             } finally {
+                naverAccess.dispose();
                 shoppingResponses.dispose();
                 await optionResponses.finish();
                 await context.close();

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { extractProductOptions, mergeOptionGroups } from '../product-options.js';
-import { normalizeOptionData, combineStructuredOptions } from '../option-sources.js';
+import { normalizeOptionData, combineStructuredOptions, normalizeNaverProductData } from '../option-sources.js';
 import { collectOptions, exploreSelectOptions, waitForOptions, watchOptionResponses } from '../option-collector.js';
 
 const identity = { url: 'https://fixture.test/products/shirt', title: 'Fixture shirt', currency: 'USD', price: 10 };
@@ -30,6 +30,21 @@ const schema = normalizeOptionData([{ url: identity.url, '@type': 'ProductGroup'
 ] }], identity)[0];
 assert.equal(schema.groups[0].combinations[0].priceDelta, 5);
 assert.equal(schema.groups[0].combinationsComplete, false);
+const naver = normalizeNaverProductData([{ data: { product: {
+  id: 13774570720, name: 'Fixture Naver product', salePrice: 119000,
+  representativeImageUrl: 'https://shop.example.test/main.png',
+  optionInfo: { optionNames: ['컬러', '사이즈'], optionCombinations: [
+    { id: '1', optionNames: ['블랙', 'M'], price: 119000, available: true },
+    { id: '2', optionNames: ['블랙', 'L'], price: 121000, available: false },
+  ] },
+} } }], '13774570720');
+assert.equal(naver.price, 119000);
+assert.equal(naver.optionGroups.length, 2);
+assert.equal(naver.optionGroups[0].combinations.length, 2);
+assert.equal(naver.optionGroups[0].combinations[1].priceDelta, 2000);
+assert.equal(naver.optionGroups[1].values.find(choice => choice.label === 'L').disabled, true);
+assert.equal(naver.optionAnalysis.status, 'complete');
+assert.equal(normalizeNaverProductData([{ id: '999', name: 'Unrelated', salePrice: 1 }], '13774570720'), null);
 
 const browser = await chromium.launch();
 try {

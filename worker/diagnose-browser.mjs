@@ -8,6 +8,7 @@ if (!['smartstore.naver.com', 'brand.naver.com'].includes(target.hostname)) {
 const productId = target.pathname.match(/\/products\/(\d+)\/?$/)?.[1];
 if (!productId) throw new Error('A product detail URL is required.');
 const documentAccept = process.argv.includes('--document-accept');
+const mobile = process.argv.includes('--mobile');
 const accept = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7';
 const loginCookies = new Set(['NID_AUT', 'NID_SES']);
 const safeUrl = raw => { try { const u = new URL(raw); return u.origin + u.pathname; } catch { return '[invalid URL]'; } };
@@ -106,6 +107,10 @@ try {
     });
     await page.send('Page.enable');
     await page.send('Network.enable');
+    if (mobile) {
+        await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true });
+        await page.send('Emulation.setTouchEmulationEnabled', { enabled: true });
+    }
     await page.send('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }] });
     // Interception remains active for URL/method checks. Explicitly restore caching.
     await page.send('Network.setCacheDisabled', { cacheDisabled: false });
@@ -123,7 +128,7 @@ try {
             productNameVisible: heading, priceVisible: !!priceText,
             login: !!document.querySelector('input[type=password]'),
             unavailable: /상품이 존재하지 않습니다|현재 서비스 접속이 불가합니다/.test(text),
-            challenge: /보안 확인|보안 인증|자동입력 방지/.test(text) };
+            challenge: /보안 확인|보안 인증|자동입력 방지|security verification|verify that you are a real user/i.test(text) };
     })()`;
     for (const delay of [1000, 3000, 8000]) {
         await new Promise(resolve => setTimeout(resolve, delay));
@@ -134,7 +139,7 @@ try {
     const last = snapshots.at(-1);
     const sameProductUrl = last.url === safeUrl(target.href);
     const ok = !authenticationBlocked && sameProductUrl && last.productNameVisible && last.priceVisible && !last.login && !last.unavailable && !last.challenge;
-    console.log(JSON.stringify({ ok, status: ok ? 'detail_visible' : last.product ? 'needs_review' : 'access_failed', mode: 'persistent_linux_anonymous', cacheEnabled: true, documentAccept, documents, requests: requests.filter(request => documentIds.has(request.requestId)), blocks, snapshots }, null, 2));
+    console.log(JSON.stringify({ ok, status: ok ? 'detail_visible' : last.product ? 'needs_review' : 'access_failed', mode: 'persistent_linux_anonymous', cacheEnabled: true, documentAccept, mobile, documents, requests: requests.filter(request => documentIds.has(request.requestId)), blocks, snapshots }, null, 2));
     if (!ok) process.exitCode = 2;
     await Promise.allSettled([...work]);
 } catch (error) {
